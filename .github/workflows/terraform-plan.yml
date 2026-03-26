@@ -57,11 +57,11 @@ jobs:
         working-directory: terraform/app
         run: terraform plan -var-file=ci.tfvars -no-color -out=plan.out 2>&1 | tee plan.txt
         env:
-          TF_VAR_github_app_private_key_base64: ${{ secrets.GITHUB_APP_PRIVATE_KEY_BASE64 }}
+          TF_VAR_github_app_private_key_base64: ${{ secrets.APP_PRIVATE_KEY_BASE64 }}
           TF_VAR_age_public_key: ${{ secrets.AGE_PUBLIC_KEY }}
           TF_VAR_age_secret_key: ${{ secrets.AGE_SECRET_KEY }}
-          TF_VAR_github_app_id: ${{ secrets.GITHUB_APP_ID }}
-          TF_VAR_github_app_installation_id: ${{ secrets.GITHUB_APP_INSTALLATION_ID }}
+          TF_VAR_github_app_id: ${{ secrets.APP_ID }}
+          TF_VAR_github_app_installation_id: ${{ secrets.APP_INSTALLATION_ID }}
 
       - name: Comment plan on PR
         uses: marocchino/sticky-pull-request-comment@v2
@@ -106,7 +106,7 @@ jobs:
           TF_VAR_sops_kms_arn: ${{ secrets.SOPS_KMS_ARN }}
           TF_VAR_aws_role_arn: ${{ secrets.PLATFORM_AWS_ROLE_ARN }}
           TF_VAR_demo_ci_aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
-          TF_VAR_github_app_installation_id: ${{ secrets.GITHUB_APP_INSTALLATION_ID }}
+          TF_VAR_github_app_installation_id: ${{ secrets.APP_INSTALLATION_ID }}
 
       - name: Comment plan on PR
         uses: marocchino/sticky-pull-request-comment@v2
