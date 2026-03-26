@@ -24,6 +24,6 @@ output "cognito_domain" {
 }
 
 output "kms_key_arn" {
-  description = "ARN of the KMS key for SOPS"
+  description = "KMS key ARN for SOPS encryption"
   value       = aws_kms_key.sops.arn
 }
