@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Provision — Connector Onboarding</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: #f8fafc;
+            color: #1e293b;
+            min-height: 100vh;
+        }
+        header {
+            background: #fff;
+            border-bottom: 1px solid #e2e8f0;
+            padding: 1rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        header h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #0f172a;
+        }
+        header .user-info {
+            font-size: 0.875rem;
+            color: #64748b;
+        }
+        main {
+            max-width: 640px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+        .card {
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        }
+        .card h2 {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: #0f172a;
+        }
+        .card p {
+            font-size: 0.875rem;
+            color: #64748b;
+            margin-bottom: 1rem;
+            line-height: 1.5;
+        }
+        label {
+            display: block;
+            font-size: 0.8125rem;
+            font-weight: 500;
+            color: #475569;
+            margin-bottom: 0.375rem;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-family: inherit;
+            color: #1e293b;
+            background: #fff;
+            transition: border-color 0.15s;
+            margin-bottom: 1rem;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+        }
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+            font-family: 'SF Mono', SFMono-Regular, Consolas, monospace;
+            font-size: 0.8125rem;
+        }
+        button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.5rem 1.25rem;
+            border: none;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s, opacity 0.15s;
+        }
+        .btn-primary {
+            background: #2563eb;
+            color: #fff;
+        }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-secondary {
+            background: #f1f5f9;
+            color: #475569;
+            border: 1px solid #e2e8f0;
+        }
+        .btn-secondary:hover { background: #e2e8f0; }
+        .field-group {
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            background: #f8fafc;
+        }
+        .field-group h3 {
+            font-size: 0.8125rem;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.75rem;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.625rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        .status-badge.running { background: #fef3c7; color: #92400e; }
+        .status-badge.success { background: #d1fae5; color: #065f46; }
+        .status-badge.failure { background: #fee2e2; color: #991b1b; }
+        .status-badge.queued  { background: #e0e7ff; color: #3730a3; }
+        .link { color: #2563eb; text-decoration: none; }
+        .link:hover { text-decoration: underline; }
+        .error-msg {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            color: #991b1b;
+            padding: 0.75rem 1rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+        }
+        .success-msg {
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            color: #166534;
+            padding: 0.75rem 1rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+        }
+        .spinner {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid #e2e8f0;
+            border-top-color: #2563eb;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin-right: 0.5rem;
+            vertical-align: middle;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .hidden { display: none !important; }
+        .result-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #f1f5f9;
+            font-size: 0.875rem;
+        }
+        .result-row:last-child { border-bottom: none; }
+        .result-label { color: #64748b; }
+        .result-value { font-weight: 500; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Provision</h1>
+            <span class="user-info" id="user-info"></span>
+        </header>
+        <main>
+            <!-- Auth Section -->
+            <div id="auth-section" class="card">
+                <h2>Sign In</h2>
+                <p>Authenticate with your organization account to onboard a new connector.</p>
+                <button class="btn-primary" id="login-btn" onclick="startLogin()">Sign in with Cognito</button>
+            </div>
+
+            <!-- Form Section -->
+            <div id="form-section" class="hidden">
+                <div class="card">
+                    <h2>Onboard Connector</h2>
+                    <p>Configure a new data connector. Credentials are encrypted client-side with age before transmission.</p>
+
+                    <div id="form-error" class="error-msg hidden"></div>
+
+                    <label for="connector_type">Connector Type</label>
+                    <select id="connector_type" onchange="renderDynamicFields()">
+                        <option value="">Select a type...</option>
+                        <option value="s3">S3</option>
+                        <option value="postgres">PostgreSQL</option>
+                        <option value="rest-api">REST API</option>
+                        <option value="sftp">SFTP</option>
+                    </select>
+
+                    <label for="connector_name">Connector Name</label>
+                    <input type="text" id="connector_name" placeholder="e.g., analytics-warehouse" pattern="[a-z0-9\-]+" title="Lowercase letters, numbers, and hyphens only">
+
+                    <div id="dynamic-fields"></div>
+
+                    <button class="btn-primary" id="submit-btn" onclick="submitForm()" disabled>
+                        Encrypt &amp; Submit
+                    </button>
+                </div>
+            </div>
+
+            <!-- Status Section -->
+            <div id="status-section" class="hidden">
+                <div class="card">
+                    <h2>Workflow Status</h2>
+                    <div id="status-content">
+                        <div><span class="spinner"></span> Dispatching workflow...</div>
+                    </div>
+                </div>
+
+                <div id="result-card" class="card hidden">
+                    <h2>Result</h2>
+                    <div id="result-content"></div>
+                    <div style="margin-top:1rem">
+                        <textarea id="access-details" rows="4" readonly placeholder="Access details will appear here after the workflow completes..."></textarea>
+                        <button class="btn-secondary" style="margin-top:0.5rem" onclick="copyAccessDetails()">Copy to Clipboard</button>
+                    </div>
+                </div>
+
+                <button class="btn-secondary" style="margin-top:0.5rem" onclick="resetForm()">Onboard Another</button>
+            </div>
+        </main>
+    </div>
+
+    <script type="module">
+        // ── Connector Registry ──────────────────────────
+        const CONNECTOR_REGISTRY = {
+            "s3": {
+                label: "S3",
+                config_fields: ["bucket_name", "region"],
+                secret_fields: []
+            },
+            "postgres": {
+                label: "PostgreSQL",
+                config_fields: ["host", "port", "database"],
+                secret_fields: ["username", "password"]
+            },
+            "rest-api": {
+                label: "REST API",
+                config_fields: ["base_url", "polling_schedule"],
+                secret_fields: ["api_key"]
+            },
+            "sftp": {
+                label: "SFTP",
+                config_fields: ["host", "port"],
+                secret_fields: ["username", "ssh_private_key"]
+            }
+        };
+
+        // ── State ───────────────────────────────────────
+        let appConfig = null;
+        let idToken = null;
+        let currentRunId = null;
+        let pollTimer = null;
+
+        // ── PKCE helpers ────────────────────────────────
+        function generateCodeVerifier() {
+            const arr = new Uint8Array(64);
+            crypto.getRandomValues(arr);
+            return base64UrlEncode(arr);
+        }
+
+        async function generateCodeChallenge(verifier) {
+            const encoder = new TextEncoder();
+            const data = encoder.encode(verifier);
+            const hash = await crypto.subtle.digest("SHA-256", data);
+            return base64UrlEncode(new Uint8Array(hash));
+        }
+
+        function base64UrlEncode(buffer) {
+            let str = "";
+            for (const byte of buffer) {
+                str += String.fromCharCode(byte);
+            }
+            return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        }
+
+        // ── Auth ────────────────────────────────────────
+        window.startLogin = async function () {
+            if (!appConfig) {
+                showError("App configuration not loaded yet. Please wait.");
+                return;
+            }
+            const verifier = generateCodeVerifier();
+            sessionStorage.setItem("code_verifier", verifier);
+            const challenge = await generateCodeChallenge(verifier);
+
+            const params = new URLSearchParams({
+                response_type: "code",
+                client_id: appConfig.cognito_client_id,
+                redirect_uri: appConfig.redirect_uri,
+                scope: "openid email profile",
+                code_challenge: challenge,
+                code_challenge_method: "S256"
+            });
+
+            window.location.href = `${appConfig.cognito_domain}/oauth2/authorize?${params}`;
+        };
+
+        async function exchangeCodeForTokens(code) {
+            const verifier = sessionStorage.getItem("code_verifier");
+            if (!verifier) {
+                showError("Missing code verifier. Please sign in again.");
+                return;
+            }
+
+            const params = new URLSearchParams({
+                grant_type: "authorization_code",
+                client_id: appConfig.cognito_client_id,
+                redirect_uri: appConfig.redirect_uri,
+                code: code,
+                code_verifier: verifier
+            });
+
+            const resp = await fetch(`${appConfig.cognito_domain}/oauth2/token`, {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: params.toString()
+            });
+
+            if (!resp.ok) {
+                showError("Token exchange failed. Please sign in again.");
+                return;
+            }
+
+            const data = await resp.json();
+            idToken = data.id_token;
+            sessionStorage.removeItem("code_verifier");
+
+            // Decode and display user info
+            const claims = JSON.parse(atob(idToken.split(".")[1]));
+            document.getElementById("user-info").textContent = claims.email || "Authenticated";
+
+            showFormSection();
+        }
+
+        // ── Config ──────────────────────────────────────
+        async function loadConfig() {
+            try {
+                const resp = await fetch("/config");
+                if (!resp.ok) throw new Error(`Config fetch failed: ${resp.status}`);
+                appConfig = await resp.json();
+            } catch (e) {
+                console.error("Failed to load config:", e);
+                showError("Failed to load application configuration.");
+            }
+        }
+
+        // ── Dynamic form fields ─────────────────────────
+        window.renderDynamicFields = function () {
+            const type = document.getElementById("connector_type").value;
+            const container = document.getElementById("dynamic-fields");
+            container.innerHTML = "";
+
+            if (!type || !CONNECTOR_REGISTRY[type]) {
+                document.getElementById("submit-btn").disabled = true;
+                return;
+            }
+
+            const reg = CONNECTOR_REGISTRY[type];
+
+            if (reg.config_fields.length > 0) {
+                const group = document.createElement("div");
+                group.className = "field-group";
+                group.innerHTML = "<h3>Configuration</h3>";
+                for (const field of reg.config_fields) {
+                    const label = document.createElement("label");
+                    label.setAttribute("for", `config_${field}`);
+                    label.textContent = field.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+                    const input = document.createElement("input");
+                    input.type = "text";
+                    input.id = `config_${field}`;
+                    input.name = `config_${field}`;
+                    input.placeholder = field;
+                    input.required = true;
+                    group.appendChild(label);
+                    group.appendChild(input);
+                }
+                container.appendChild(group);
+            }
+
+            if (reg.secret_fields.length > 0) {
+                const group = document.createElement("div");
+                group.className = "field-group";
+                group.innerHTML = "<h3>Secrets (encrypted client-side)</h3>";
+                for (const field of reg.secret_fields) {
+                    const label = document.createElement("label");
+                    label.setAttribute("for", `secret_${field}`);
+                    label.textContent = field.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+                    const isMultiline = field === "ssh_private_key";
+                    let input;
+                    if (isMultiline) {
+                        input = document.createElement("textarea");
+                        input.rows = 4;
+                    } else {
+                        input = document.createElement("input");
+                        input.type = field.includes("password") || field.includes("key") ? "password" : "text";
+                    }
+                    input.id = `secret_${field}`;
+                    input.name = `secret_${field}`;
+                    input.placeholder = field;
+                    input.required = true;
+                    group.appendChild(label);
+                    group.appendChild(input);
+                }
+                container.appendChild(group);
+            }
+
+            document.getElementById("submit-btn").disabled = false;
+        };
+
+        // ── Submit ──────────────────────────────────────
+        window.submitForm = async function () {
+            const type = document.getElementById("connector_type").value;
+            const name = document.getElementById("connector_name").value.trim();
+            const reg = CONNECTOR_REGISTRY[type];
+
+            if (!type || !name || !reg) {
+                showError("Please fill in all required fields.");
+                return;
+            }
+
+            // Validate connector name format
+            if (!/^[a-z0-9][a-z0-9\-]*[a-z0-9]$/.test(name) && name.length > 1) {
+                showError("Connector name must use lowercase letters, numbers, and hyphens only.");
+                return;
+            }
+
+            // Build payload
+            const config = {};
+            for (const field of reg.config_fields) {
+                const val = document.getElementById(`config_${field}`)?.value?.trim();
+                if (!val) { showError(`Configuration field "${field}" is required.`); return; }
+                config[field] = val;
+            }
+
+            const secrets = {};
+            for (const field of reg.secret_fields) {
+                const val = document.getElementById(`secret_${field}`)?.value?.trim();
+                if (!val) { showError(`Secret field "${field}" is required.`); return; }
+                secrets[field] = val;
+            }
+
+            const payload = {
+                connector_name: name,
+                connector_type: type,
+                config: config,
+                secrets: secrets
+            };
+
+            // Encrypt with age
+            const submitBtn = document.getElementById("submit-btn");
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="spinner"></span> Encrypting...';
+            hideError();
+
+            let encryptedBase64;
+            try {
+                const ageModule = await import("https://cdn.jsdelivr.net/npm/age-encryption@0.4.0/dist/index.js");
+                const { Encrypter } = ageModule;
+                const encrypter = new Encrypter();
+                encrypter.addRecipient(appConfig.age_public_key);
+                const plaintext = new TextEncoder().encode(JSON.stringify(payload));
+                const encrypted = await encrypter.encrypt(plaintext);
+                encryptedBase64 = btoa(String.fromCharCode(...new Uint8Array(encrypted)));
+            } catch (e) {
+                showError(`Encryption failed: ${e.message}`);
+                submitBtn.disabled = false;
+                submitBtn.textContent = "Encrypt & Submit";
+                return;
+            }
+
+            // POST to /dispatch
+            submitBtn.innerHTML = '<span class="spinner"></span> Dispatching...';
+            try {
+                const resp = await fetch("/dispatch", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${idToken}`
+                    },
+                    body: JSON.stringify({
+                        connector_name: name,
+                        connector_type: type,
+                        encrypted_payload: encryptedBase64
+                    })
+                });
+
+                const result = await resp.json();
+                if (!resp.ok) {
+                    showError(result.error || "Dispatch failed.");
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = "Encrypt & Submit";
+                    return;
+                }
+
+                // Show status section
+                showStatusSection(result);
+            } catch (e) {
+                showError(`Request failed: ${e.message}`);
+                submitBtn.disabled = false;
+                submitBtn.textContent = "Encrypt & Submit";
+            }
+        };
+
+        // ── Status polling ──────────────────────────────
+        function showStatusSection(dispatchResult) {
+            document.getElementById("form-section").classList.add("hidden");
+            document.getElementById("status-section").classList.remove("hidden");
+
+            currentRunId = dispatchResult.run_id;
+            const connectorName = dispatchResult.connector_name;
+
+            let html = "";
+            if (dispatchResult.run_url) {
+                html += `<div class="result-row"><span class="result-label">Workflow Run</span><a class="link" href="${dispatchResult.run_url}" target="_blank">View on GitHub</a></div>`;
+            }
+            html += `<div class="result-row"><span class="result-label">Connector</span><span class="result-value">${dispatchResult.connector_name}</span></div>`;
+            html += `<div class="result-row"><span class="result-label">Type</span><span class="result-value">${dispatchResult.connector_type}</span></div>`;
+            html += `<div class="result-row"><span class="result-label">Requested By</span><span class="result-value">${dispatchResult.requested_by}</span></div>`;
+            html += `<div class="result-row"><span class="result-label">Status</span><span class="status-badge running" id="run-status-badge"><span class="spinner"></span> In Progress</span></div>`;
+
+            document.getElementById("status-content").innerHTML = html;
+
+            // Start polling
+            if (currentRunId) {
+                let attempts = 0;
+                const maxAttempts = 36; // 3 minutes at 5s intervals
+                pollTimer = setInterval(async () => {
+                    attempts++;
+                    if (attempts > maxAttempts) {
+                        clearInterval(pollTimer);
+                        const badge = document.getElementById("run-status-badge");
+                        if (badge) {
+                            badge.className = "status-badge failure";
+                            badge.textContent = "Timed Out";
+                        }
+                        return;
+                    }
+                    try {
+                        const params = new URLSearchParams({ run_id: currentRunId, connector_name: connectorName });
+                        const resp = await fetch(`/run-status?${params}`);
+                        const data = await resp.json();
+                        updateRunStatus(data);
+                    } catch (e) {
+                        console.error("Poll error:", e);
+                    }
+                }, 5000);
+            }
+        }
+
+        function updateRunStatus(data) {
+            const badge = document.getElementById("run-status-badge");
+            if (!badge) return;
+
+            if (data.status === "completed") {
+                clearInterval(pollTimer);
+                if (data.conclusion === "success") {
+                    badge.className = "status-badge success";
+                    badge.textContent = "Completed";
+                    showResult(data);
+                } else {
+                    badge.className = "status-badge failure";
+                    badge.textContent = `Failed: ${data.conclusion}`;
+                }
+            } else if (data.status === "queued") {
+                badge.className = "status-badge queued";
+                badge.innerHTML = '<span class="spinner"></span> Queued';
+            } else {
+                badge.className = "status-badge running";
+                badge.innerHTML = '<span class="spinner"></span> In Progress';
+            }
+        }
+
+        function showResult(data) {
+            const resultCard = document.getElementById("result-card");
+            resultCard.classList.remove("hidden");
+
+            let html = "";
+            if (data.pr_url) {
+                html += `<div class="result-row"><span class="result-label">Pull Request</span><a class="link" href="${data.pr_url}" target="_blank">#${data.pr_number}</a></div>`;
+            }
+            html += `<div class="result-row"><span class="result-label">Run URL</span><a class="link" href="${data.run_url}" target="_blank">View Run</a></div>`;
+            document.getElementById("result-content").innerHTML = html;
+
+            const details = [
+                `Connector onboarded successfully.`,
+                `Run: ${data.run_url}`,
+                data.pr_url ? `PR: ${data.pr_url}` : null
+            ].filter(Boolean).join("\n");
+            document.getElementById("access-details").value = details;
+        }
+
+        window.copyAccessDetails = function () {
+            const ta = document.getElementById("access-details");
+            ta.select();
+            navigator.clipboard.writeText(ta.value).then(() => {
+                const btn = ta.nextElementSibling;
+                const orig = btn.textContent;
+                btn.textContent = "Copied!";
+                setTimeout(() => { btn.textContent = orig; }, 2000);
+            });
+        };
+
+        window.resetForm = function () {
+            if (pollTimer) clearInterval(pollTimer);
+            currentRunId = null;
+            document.getElementById("status-section").classList.add("hidden");
+            document.getElementById("result-card").classList.add("hidden");
+            document.getElementById("form-section").classList.remove("hidden");
+            document.getElementById("connector_type").value = "";
+            document.getElementById("connector_name").value = "";
+            document.getElementById("dynamic-fields").innerHTML = "";
+            document.getElementById("submit-btn").disabled = true;
+            document.getElementById("submit-btn").textContent = "Encrypt & Submit";
+            hideError();
+        };
+
+        // ── UI helpers ──────────────────────────────────
+        function showFormSection() {
+            document.getElementById("auth-section").classList.add("hidden");
+            document.getElementById("form-section").classList.remove("hidden");
+        }
+
+        function showError(msg) {
+            const el = document.getElementById("form-error");
+            el.textContent = msg;
+            el.classList.remove("hidden");
+        }
+
+        function hideError() {
+            document.getElementById("form-error").classList.add("hidden");
+        }
+
+        // ── Init ────────────────────────────────────────
+        async function init() {
+            await loadConfig();
+
+            const params = new URLSearchParams(window.location.search);
+
+            // Skip auth for local testing
+            if (params.get("noauth") === "1") {
+                idToken = "dev-token";
+                document.getElementById("user-info").textContent = "dev@localhost";
+                showFormSection();
+                window.history.replaceState({}, "", "/");
+                return;
+            }
+
+            // Handle OAuth callback
+            const code = params.get("code");
+            if (code && appConfig) {
+                window.history.replaceState({}, "", "/");
+                await exchangeCodeForTokens(code);
+                return;
+            }
+
+            // Check for existing token (page refresh)
+            if (idToken) {
+                showFormSection();
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
