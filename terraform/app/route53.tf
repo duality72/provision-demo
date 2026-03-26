@@ -1,11 +1,3 @@
-resource "aws_route53_record" "app" {
-  zone_id = data.aws_route53_zone.main.zone_id
-  name    = var.app_domain_name
-  type    = "A"
-
-  alias {
-    name                   = data.aws_lb.main.dns_name
-    zone_id                = data.aws_lb.main.zone_id
-    evaluate_target_health = true
-  }
-}
+# Route53 record not needed — using Lambda Function URL directly.
+# To add a custom domain later, create a CloudFront distribution
+# in front of the Function URL and point a Route53 alias at it.

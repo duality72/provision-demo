@@ -24,15 +24,3 @@ terraform {
 provider "aws" {
   region = var.aws_region
 }
-
-data "aws_lb" "main" {
-  arn = var.alb_arn
-}
-
-data "aws_lb_listener" "https" {
-  arn = var.alb_listener_arn
-}
-
-data "aws_route53_zone" "main" {
-  name = var.hosted_zone_name
-}

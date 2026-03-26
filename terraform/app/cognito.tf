@@ -42,8 +42,8 @@ resource "aws_cognito_user_pool_client" "main" {
 
   supported_identity_providers = ["COGNITO"]
 
-  callback_urls = length(var.cognito_callback_urls) > 0 ? var.cognito_callback_urls : ["https://${var.app_domain_name}/"]
-  logout_urls   = ["https://${var.app_domain_name}/"]
+  callback_urls = [aws_lambda_function_url.app.function_url]
+  logout_urls   = [aws_lambda_function_url.app.function_url]
 
   explicit_auth_flows = [
     "ALLOW_REFRESH_TOKEN_AUTH",

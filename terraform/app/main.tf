@@ -19,9 +19,7 @@ resource "aws_lambda_function" "app" {
   environment {
     variables = {
       COGNITO_USER_POOL_ID = aws_cognito_user_pool.main.id
-      COGNITO_CLIENT_ID    = aws_cognito_user_pool_client.main.id
       COGNITO_DOMAIN       = "${var.cognito_domain_prefix}.auth.${var.aws_region}.amazoncognito.com"
-      APP_DOMAIN           = var.app_domain_name
       APP_NAME             = var.app_name
     }
   }
@@ -34,38 +32,14 @@ resource "aws_lambda_layer_version" "deps" {
   description         = "PyJWT and cryptography dependencies"
 }
 
-resource "aws_lambda_permission" "alb" {
-  statement_id  = "AllowALBInvoke"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.app.function_name
-  principal     = "elasticloadbalancing.amazonaws.com"
-  source_arn    = aws_lb_target_group.lambda.arn
-}
+resource "aws_lambda_function_url" "app" {
+  function_name      = aws_lambda_function.app.function_name
+  authorization_type = "NONE"
 
-resource "aws_lb_target_group" "lambda" {
-  name        = var.app_name
-  target_type = "lambda"
-  vpc_id      = var.vpc_id
-}
-
-resource "aws_lb_target_group_attachment" "lambda" {
-  target_group_arn = aws_lb_target_group.lambda.arn
-  target_id        = aws_lambda_function.app.arn
-  depends_on       = [aws_lambda_permission.alb]
-}
-
-resource "aws_lb_listener_rule" "app" {
-  listener_arn = data.aws_lb_listener.https.arn
-  priority     = 100
-
-  action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.lambda.arn
-  }
-
-  condition {
-    host_header {
-      values = [var.app_domain_name]
-    }
+  cors {
+    allow_origins     = ["*"]
+    allow_methods     = ["GET", "POST", "OPTIONS"]
+    allow_headers     = ["Content-Type", "Authorization"]
+    max_age           = 3600
   }
 }

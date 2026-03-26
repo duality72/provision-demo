@@ -16,26 +16,6 @@ variable "environment" {
   default     = "production"
 }
 
-variable "alb_arn" {
-  description = "ARN of the existing Application Load Balancer"
-  type        = string
-}
-
-variable "alb_listener_arn" {
-  description = "ARN of the existing ALB HTTPS listener"
-  type        = string
-}
-
-variable "hosted_zone_name" {
-  description = "Route53 hosted zone name (e.g., example.com)"
-  type        = string
-}
-
-variable "app_domain_name" {
-  description = "Domain name for the application (e.g., provision.example.com)"
-  type        = string
-}
-
 variable "github_app_id" {
   description = "GitHub App ID"
   type        = string
@@ -58,21 +38,10 @@ variable "age_secret_key" {
   sensitive   = true
 }
 
-variable "cognito_callback_urls" {
-  description = "Allowed callback URLs for Cognito"
-  type        = list(string)
-  default     = []
-}
-
 variable "platform_repo_full_name" {
   description = "Full name of the platform repo (owner/repo)"
   type        = string
   default     = "provision-demo-platform"
-}
-
-variable "vpc_id" {
-  description = "VPC ID for the ALB target group"
-  type        = string
 }
 
 variable "cognito_domain_prefix" {

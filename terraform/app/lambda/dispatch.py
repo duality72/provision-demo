@@ -24,9 +24,7 @@ import boto3
 # ---------------------------------------------------------------------------
 
 COGNITO_USER_POOL_ID = os.environ.get("COGNITO_USER_POOL_ID", "")
-COGNITO_CLIENT_ID = os.environ.get("COGNITO_CLIENT_ID", "")
 COGNITO_REGION = os.environ.get("AWS_REGION", "us-east-1")
-APP_DOMAIN = os.environ.get("APP_DOMAIN", "")
 APP_NAME = os.environ.get("APP_NAME", "provision-demo")
 
 CONNECTOR_TYPES = {"s3", "postgres", "rest-api", "sftp"}
@@ -76,6 +74,16 @@ def get_secret(name):
     return value
 
 
+def get_cognito_client_id():
+    """Get Cognito client ID from SSM (avoids circular dependency with Function URL)."""
+    return get_ssm_param(f"/{APP_NAME}/cognito-client-id")
+
+
+def get_app_url():
+    """Get the application base URL from SSM."""
+    return get_ssm_param(f"/{APP_NAME}/app-url")
+
+
 # ---------------------------------------------------------------------------
 # Cognito JWT validation
 # ---------------------------------------------------------------------------
@@ -98,6 +106,7 @@ def get_jwks():
 
 def validate_cognito_token(token):
     """Validate a Cognito ID token and return claims."""
+    client_id = get_cognito_client_id()
     jwks = get_jwks()
     header = jwt.get_unverified_header(token)
     kid = header["kid"]
@@ -115,7 +124,7 @@ def validate_cognito_token(token):
         token,
         public_key,
         algorithms=["RS256"],
-        audience=COGNITO_CLIENT_ID,
+        audience=client_id,
         issuer=f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_USER_POOL_ID}",
         options={"require": ["exp", "iss", "aud", "token_use"]},
     )
@@ -196,6 +205,35 @@ def github_api(method, path, body=None):
 
 
 # ---------------------------------------------------------------------------
+# Event normalization (Function URL vs ALB)
+# ---------------------------------------------------------------------------
+
+def normalize_event(event):
+    """Extract method, path, headers, query params from Function URL or ALB event."""
+    if "requestContext" in event and "http" in event.get("requestContext", {}):
+        # Lambda Function URL (API Gateway v2 format)
+        http = event["requestContext"]["http"]
+        return {
+            "method": http.get("method", "GET"),
+            "path": event.get("rawPath", "/"),
+            "headers": event.get("headers", {}),
+            "queryStringParameters": event.get("queryStringParameters") or {},
+            "body": event.get("body", ""),
+            "isBase64Encoded": event.get("isBase64Encoded", False),
+        }
+    else:
+        # ALB format
+        return {
+            "method": event.get("httpMethod", "GET"),
+            "path": event.get("path", "/"),
+            "headers": event.get("headers", {}),
+            "queryStringParameters": event.get("queryStringParameters") or {},
+            "body": event.get("body", ""),
+            "isBase64Encoded": event.get("isBase64Encoded", False),
+        }
+
+
+# ---------------------------------------------------------------------------
 # Route handlers
 # ---------------------------------------------------------------------------
 
@@ -214,19 +252,21 @@ def handle_index(event):
 def handle_config(event):
     """Return application configuration for the frontend."""
     age_pub_key = get_ssm_param(f"/{APP_NAME}/age-public-key")
+    client_id = get_cognito_client_id()
+    app_url = get_app_url()
     return response_json(200, {
         "age_public_key": age_pub_key,
-        "cognito_client_id": COGNITO_CLIENT_ID,
+        "cognito_client_id": client_id,
         "cognito_domain": f"https://{os.environ.get('COGNITO_DOMAIN', '')}",
         "cognito_region": COGNITO_REGION,
-        "redirect_uri": f"https://{APP_DOMAIN}/",
+        "redirect_uri": app_url,
     })
 
 
-def handle_dispatch(event):
+def handle_dispatch(normalized):
     """Validate auth, dispatch a GitHub Actions workflow."""
-    body = event.get("body", "")
-    if event.get("isBase64Encoded"):
+    body = normalized["body"]
+    if normalized["isBase64Encoded"]:
         body = base64.b64decode(body).decode()
     try:
         payload = json.loads(body)
@@ -234,8 +274,8 @@ def handle_dispatch(event):
         return response_json(400, {"error": "Invalid JSON body"})
 
     # Validate authorization
+    headers = normalized["headers"]
     auth_header = None
-    headers = event.get("headers", {})
     for key, value in headers.items():
         if key.lower() == "authorization":
             auth_header = value
@@ -308,9 +348,9 @@ def handle_dispatch(event):
     })
 
 
-def handle_run_status(event):
+def handle_run_status(normalized):
     """Check the status of a workflow run and find the resulting PR."""
-    params = event.get("queryStringParameters") or {}
+    params = normalized["queryStringParameters"]
     run_id = params.get("run_id")
     connector_name = params.get("connector_name")
 
@@ -368,8 +408,9 @@ def response_json(status_code, body):
 
 def handler(event, context):
     """Main Lambda handler - route dispatcher."""
-    method = event.get("httpMethod", "GET")
-    path = event.get("path", "/")
+    normalized = normalize_event(event)
+    method = normalized["method"]
+    path = normalized["path"]
 
     if method == "OPTIONS":
         return response_json(200, {})
@@ -379,8 +420,8 @@ def handler(event, context):
     elif method == "GET" and path == "/config":
         return handle_config(event)
     elif method == "POST" and path == "/dispatch":
-        return handle_dispatch(event)
+        return handle_dispatch(normalized)
     elif method == "GET" and path == "/run-status":
-        return handle_run_status(event)
+        return handle_run_status(normalized)
     else:
         return response_json(404, {"error": "Not found"})

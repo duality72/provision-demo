@@ -3,6 +3,11 @@ output "lambda_function_arn" {
   value       = aws_lambda_function.app.arn
 }
 
+output "function_url" {
+  description = "Lambda Function URL"
+  value       = aws_lambda_function_url.app.function_url
+}
+
 output "cognito_user_pool_id" {
   description = "Cognito User Pool ID"
   value       = aws_cognito_user_pool.main.id
@@ -21,9 +26,4 @@ output "cognito_domain" {
 output "kms_key_arn" {
   description = "ARN of the KMS key for SOPS"
   value       = aws_kms_key.sops.arn
-}
-
-output "app_url" {
-  description = "Application URL"
-  value       = "https://${var.app_domain_name}"
 }
