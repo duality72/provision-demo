@@ -28,10 +28,8 @@ resource "github_actions_secret" "aws_role_arn" {
   plaintext_value = var.aws_role_arn
 }
 
-resource "github_app_installation_repository" "platform" {
-  installation_id = var.github_app_installation_id
-  repository      = var.platform_repo_name
-}
+# Note: GitHub App installation on repos is managed manually via the App settings.
+# The PAT doesn't have permission to modify app installations.
 
 # ---------------------------------------------------------------------------
 # Demo repo: Actions secrets

@@ -31,11 +31,6 @@ variable "aws_role_arn" {
   type        = string
 }
 
-variable "github_app_installation_id" {
-  description = "GitHub App installation ID"
-  type        = string
-}
-
 variable "demo_repo_name" {
   description = "Name of the provision-demo repository"
   type        = string

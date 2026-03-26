@@ -14,11 +14,6 @@ output "demo_repo_secrets" {
   ]
 }
 
-output "app_installation_repo" {
-  description = "Repository with GitHub App installation"
-  value       = github_app_installation_repository.platform.repository
-}
-
 output "branch_protection_demo" {
   description = "Branch protection rule ID for provision-demo main"
   value       = github_branch_protection.demo_main.id
