@@ -5,8 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAYER_DIR=$(mktemp -d)
 TARGET="${LAYER_DIR}/python/lib/python3.12/site-packages"
 
-echo "Installing dependencies into ${TARGET}..."
+echo "Installing dependencies for Linux x86_64 into ${TARGET}..."
 pip install --target "${TARGET}" --quiet \
+  --platform manylinux2014_x86_64 \
+  --implementation cp \
+  --python-version 3.12 \
+  --only-binary=:all: \
   "PyJWT[crypto]>=2.8.0" \
   "cryptography>=41.0.0"
 
