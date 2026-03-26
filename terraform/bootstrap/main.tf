@@ -227,10 +227,17 @@ resource "aws_iam_role_policy" "ci_provision_demo" {
           "ssm:DeleteParameter",
           "ssm:AddTagsToResource",
           "ssm:RemoveTagsFromResource",
-          "ssm:ListTagsForResource",
-          "ssm:DescribeParameters"
+          "ssm:ListTagsForResource"
         ]
         Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/provision-demo/*"
+      },
+      {
+        Sid    = "SSMDescribeParameters"
+        Effect = "Allow"
+        Action = [
+          "ssm:DescribeParameters"
+        ]
+        Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:*"
       },
       {
         Sid    = "Route53Management"
