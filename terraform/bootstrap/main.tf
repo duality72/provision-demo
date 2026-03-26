@@ -139,7 +139,7 @@ resource "aws_iam_role_policy" "ci_provision_demo" {
         Action = [
           "cognito-idp:*"
         ]
-        Resource = "arn:aws:cognito-idp:${var.aws_region}:${data.aws_caller_identity.current.account_id}:userpool/*"
+        Resource = "*"
       },
       {
         Sid    = "ALBManagement"
