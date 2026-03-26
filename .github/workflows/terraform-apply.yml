@@ -46,6 +46,15 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build Lambda layer
+        working-directory: terraform/app/lambda
+        run: bash build-layer.sh
+
       - uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init
@@ -93,4 +102,3 @@ jobs:
           TF_VAR_sops_kms_arn: ${{ secrets.SOPS_KMS_ARN }}
           TF_VAR_aws_role_arn: ${{ secrets.PLATFORM_AWS_ROLE_ARN }}
           TF_VAR_demo_ci_aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
-          TF_VAR_github_app_installation_id: ${{ secrets.APP_INSTALLATION_ID }}
