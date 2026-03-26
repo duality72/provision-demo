@@ -1,0 +1,6 @@
+aws_region             = "us-east-1"
+github_owner           = "myorg"
+state_bucket_name      = "provision-demo-tfstate"
+state_lock_table_name  = "provision-demo-tflock"
+provision_demo_repo_name = "provision-demo"
+platform_repo_name     = "provision-demo-platform"

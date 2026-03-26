@@ -35,3 +35,14 @@ variable "github_app_installation_id" {
   description = "GitHub App installation ID"
   type        = string
 }
+
+variable "demo_repo_name" {
+  description = "Name of the provision-demo repository"
+  type        = string
+  default     = "provision-demo"
+}
+
+variable "demo_ci_aws_role_arn" {
+  description = "IAM role ARN for provision-demo CI (from bootstrap)"
+  type        = string
+}
