@@ -230,6 +230,14 @@
         .btn-danger-sm:hover { background: #fee2e2; }
         .btn-danger-sm:disabled { opacity: 0.5; cursor: not-allowed; }
         .connector-right { display: flex; align-items: center; gap: 0.75rem; }
+        .field-hint {
+            display: block;
+            font-size: 0.7rem;
+            font-weight: 400;
+            color: #94a3b8;
+            margin-top: -0.25rem;
+            margin-bottom: 0.5rem;
+        }
         .empty-state {
             text-align: center;
             padding: 2rem;
@@ -281,6 +289,7 @@
                     <div id="form-error" class="error-msg hidden"></div>
 
                     <label for="connector_type">Connector Type</label>
+                    <span class="field-hint">The type of data source or service this connector integrates with.</span>
                     <select id="connector_type" onchange="renderDynamicFields()">
                         <option value="">Select a type...</option>
                         <option value="s3">S3</option>
@@ -290,6 +299,7 @@
                     </select>
 
                     <label for="connector_name">Connector Name</label>
+                    <span class="field-hint">A unique identifier for this connector. Lowercase letters, numbers, and hyphens only.</span>
                     <input type="text" id="connector_name" placeholder="e.g., analytics-warehouse" pattern="[a-z0-9\-]+" title="Lowercase letters, numbers, and hyphens only">
 
                     <div id="dynamic-fields"></div>
@@ -338,36 +348,50 @@
 
         const FIELD_VALIDATORS = {
             bucket_name: {
+                tooltip: "The S3 bucket to connect to. Must be 3-63 characters: lowercase letters, numbers, hyphens, and periods.",
                 validate: v => /^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$/.test(v),
                 message: "Bucket name must be 3-63 characters, lowercase letters, numbers, hyphens, and periods."
             },
             region: {
                 type: "select",
                 options: AWS_REGIONS,
+                tooltip: "The AWS region where the S3 bucket is located.",
                 validate: v => AWS_REGIONS.includes(v),
                 message: "Please select a valid AWS region."
             },
             host: {
+                tooltip: "Hostname or IP address of the server (e.g., db.example.com or 10.0.1.5).",
                 validate: v => /^[a-zA-Z0-9]([a-zA-Z0-9\-\.]*[a-zA-Z0-9])?$/.test(v),
                 message: "Host must be a valid hostname or IP address."
             },
             port: {
                 type: "number",
+                tooltip: "Network port (1\u201365535). Common defaults: PostgreSQL 5432, SFTP 22.",
                 validate: v => { const n = parseInt(v, 10); return !isNaN(n) && n >= 1 && n <= 65535; },
                 message: "Port must be a number between 1 and 65535."
             },
             database: {
+                tooltip: "Name of the database to connect to.",
                 validate: v => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(v),
                 message: "Database name must start with a letter or underscore, followed by letters, numbers, or underscores."
             },
             base_url: {
+                tooltip: "The root URL of the API, including protocol (e.g., https://api.example.com/v1).",
                 validate: v => { try { const u = new URL(v); return u.protocol === "https:" || u.protocol === "http:"; } catch { return false; } },
                 message: "Base URL must be a valid HTTP or HTTPS URL."
             },
             polling_schedule: {
+                tooltip: "Cron expression for how often to poll the API (e.g., \"*/15 * * * *\" for every 15 min).",
                 validate: v => /^(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)$/.test(v.trim()),
                 message: "Polling schedule must be a valid cron expression (e.g., \"*/15 * * * *\")."
             },
+        };
+
+        const SECRET_TOOLTIPS = {
+            username: "Database or server username for authentication.",
+            password: "Database password. Encrypted client-side before transmission.",
+            api_key: "API key or token for authenticating requests. Encrypted client-side.",
+            ssh_private_key: "PEM-formatted SSH private key for SFTP authentication. Encrypted client-side.",
         };
 
         const CONNECTOR_REGISTRY = {
@@ -540,6 +564,12 @@
                     input.name = `config_${field}`;
                     input.required = true;
                     group.appendChild(label);
+                    if (validator?.tooltip) {
+                        const hint = document.createElement("span");
+                        hint.className = "field-hint";
+                        hint.textContent = validator.tooltip;
+                        group.appendChild(hint);
+                    }
                     group.appendChild(input);
                 }
                 container.appendChild(group);
@@ -567,6 +597,12 @@
                     input.placeholder = field;
                     input.required = true;
                     group.appendChild(label);
+                    if (SECRET_TOOLTIPS[field]) {
+                        const hint = document.createElement("span");
+                        hint.className = "field-hint";
+                        hint.textContent = SECRET_TOOLTIPS[field];
+                        group.appendChild(hint);
+                    }
                     group.appendChild(input);
                 }
                 container.appendChild(group);
