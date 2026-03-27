@@ -217,6 +217,19 @@
         .connector-info { display: flex; flex-direction: column; gap: 0.25rem; }
         .connector-name { font-weight: 500; color: #0f172a; }
         .connector-meta { font-size: 0.75rem; color: #94a3b8; }
+        .btn-danger-sm {
+            background: #fef2f2;
+            color: #dc2626;
+            border: 1px solid #fecaca;
+            padding: 0.25rem 0.75rem;
+            font-size: 0.75rem;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        .btn-danger-sm:hover { background: #fee2e2; }
+        .btn-danger-sm:disabled { opacity: 0.5; cursor: not-allowed; }
+        .connector-right { display: flex; align-items: center; gap: 0.75rem; }
         .empty-state {
             text-align: center;
             padding: 2rem;
@@ -729,17 +742,19 @@
                 const connectors = data.connectors || [];
 
                 const active = connectors.filter(c => c.status === "active");
+                const removing = connectors.filter(c => c.status === "removing");
                 const pending = connectors.filter(c => c.status === "pending");
 
-                renderConnectorList("active-connectors", active, false);
-                renderConnectorList("pending-connectors", pending, true);
+                // Show active connectors with remove buttons, plus any pending removals
+                renderConnectorList("active-connectors", [...active, ...removing], { showRemove: true });
+                renderConnectorList("pending-connectors", pending);
             } catch (e) {
                 document.getElementById("active-connectors").innerHTML = `<div class="empty-state">Failed to load connectors.</div>`;
                 document.getElementById("pending-connectors").innerHTML = `<div class="empty-state">Failed to load connectors.</div>`;
             }
         }
 
-        function renderConnectorList(containerId, items, showPR) {
+        function renderConnectorList(containerId, items, options = {}) {
             const container = document.getElementById(containerId);
             if (items.length === 0) {
                 container.innerHTML = `<div class="empty-state">None found.</div>`;
@@ -747,24 +762,69 @@
             }
             let html = "";
             for (const c of items) {
+                const badgeClass = c.status === "active" ? "success" : c.status === "removing" ? "failure" : "queued";
                 const typeBadge = c.connector_type
-                    ? `<span class="status-badge ${c.status === 'active' ? 'success' : 'queued'}">${c.connector_type}</span>`
+                    ? `<span class="status-badge ${badgeClass}">${c.connector_type}</span>`
                     : "";
                 let meta = "";
-                if (showPR && c.pr_url) {
+                if (c.pr_url) {
                     meta += `<a class="link" href="${c.pr_url}" target="_blank">PR #${c.pr_number}</a>`;
                     if (c.requested_by) meta += ` &middot; ${c.requested_by}`;
+                }
+                let removeBtn = "";
+                if (options.showRemove && c.status === "active") {
+                    removeBtn = `<button class="btn-danger-sm" onclick="removeConnector('${c.name}')">Remove</button>`;
+                }
+                let statusLabel = "";
+                if (c.status === "removing") {
+                    statusLabel = `<span class="status-badge failure">removing</span>`;
                 }
                 html += `<div class="connector-item">
                     <div class="connector-info">
                         <span class="connector-name">${c.name}</span>
                         ${meta ? `<span class="connector-meta">${meta}</span>` : ""}
                     </div>
-                    ${typeBadge}
+                    <div class="connector-right">
+                        ${statusLabel}
+                        ${typeBadge}
+                        ${removeBtn}
+                    </div>
                 </div>`;
             }
             container.innerHTML = html;
         }
+
+        window.removeConnector = async function (name) {
+            if (!confirm(`Remove connector "${name}"? This will create a PR for review.`)) return;
+
+            // Disable the button that was clicked
+            event.target.disabled = true;
+            event.target.textContent = "Removing...";
+
+            try {
+                const resp = await fetch("/remove", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${idToken}`
+                    },
+                    body: JSON.stringify({ connector_name: name })
+                });
+                const data = await resp.json();
+                if (!resp.ok) {
+                    alert(data.error || "Removal failed.");
+                    event.target.disabled = false;
+                    event.target.textContent = "Remove";
+                    return;
+                }
+                // Refresh the connectors list
+                await loadConnectors();
+            } catch (e) {
+                alert(`Request failed: ${e.message}`);
+                event.target.disabled = false;
+                event.target.textContent = "Remove";
+            }
+        };
 
         // ── UI helpers ──────────────────────────────────
         function showFormSection() {

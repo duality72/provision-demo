@@ -5,8 +5,12 @@ Routes:
   GET  /           -> Serve the SPA (index.html)
   GET  /config     -> Return app configuration (age public key, Cognito settings)
   POST /dispatch   -> Validate JWT, dispatch GitHub Actions workflow
+  POST /remove     -> Validate JWT, dispatch connector removal workflow
+  GET  /connectors -> List active and pending connectors
   GET  /run-status -> Check workflow run status and find resulting PR
 """
+
+import datetime
 
 import json
 import os
@@ -305,8 +309,37 @@ def handle_dispatch(normalized):
     if not encrypted_payload:
         return response_json(400, {"error": "encrypted_payload is required"})
 
-    # Dispatch workflow
+    # Check for existing connector
     platform_repo = get_ssm_param(f"/{APP_NAME}/platform-repo")
+
+    # Check if connector already exists on main
+    try:
+        github_api("GET", f"/repos/{platform_repo}/contents/connectors/{connector_name}?ref=main")
+        return response_json(409, {
+            "error": f"Connector '{connector_name}' already exists. Remove it first before re-adding."
+        })
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            error_body = e.read().decode() if e.fp else str(e)
+            return response_json(502, {"error": f"GitHub API error: {e.code} {error_body}"})
+
+    # Check for open onboard PRs for this connector
+    try:
+        prs = github_api("GET", f"/repos/{platform_repo}/pulls?state=open&per_page=100")
+        for pr in (prs or []):
+            head_ref = pr.get("head", {}).get("ref", "")
+            if head_ref.startswith(f"feat/onboard-{connector_name}-"):
+                return response_json(409, {
+                    "error": f"Connector '{connector_name}' already has a pending onboarding request (PR #{pr['number']})."
+                })
+    except Exception:
+        pass
+
+    # Generate unique branch name
+    timestamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    branch_name = f"feat/onboard-{connector_name}-{timestamp}"
+
+    # Dispatch workflow
     try:
         github_api(
             "POST",
@@ -318,6 +351,7 @@ def handle_dispatch(normalized):
                     "connector_type": connector_type,
                     "encrypted_payload": encrypted_payload,
                     "requested_by": email,
+                    "branch_name": branch_name,
                 },
             },
         )
@@ -345,6 +379,106 @@ def handle_dispatch(normalized):
         "requested_by": email,
         "run_id": run_id,
         "run_url": f"https://github.com/{platform_repo}/actions/runs/{run_id}" if run_id else None,
+        "branch_name": branch_name,
+    })
+
+
+def handle_remove(normalized):
+    """Validate auth, dispatch a connector removal workflow."""
+    body = normalized["body"]
+    if normalized["isBase64Encoded"]:
+        body = base64.b64decode(body).decode()
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, TypeError):
+        return response_json(400, {"error": "Invalid JSON body"})
+
+    # Validate authorization
+    headers = normalized["headers"]
+    auth_header = None
+    for key, value in headers.items():
+        if key.lower() == "authorization":
+            auth_header = value
+            break
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return response_json(401, {"error": "Missing or invalid Authorization header"})
+
+    token = auth_header[7:]
+    try:
+        claims = validate_cognito_token(token)
+    except Exception as e:
+        return response_json(401, {"error": f"Token validation failed: {str(e)}"})
+
+    email = claims.get("email", "unknown")
+    connector_name = payload.get("connector_name", "").strip()
+
+    if not connector_name:
+        return response_json(400, {"error": "connector_name is required"})
+
+    # Verify connector exists on main
+    platform_repo = get_ssm_param(f"/{APP_NAME}/platform-repo")
+    try:
+        github_api("GET", f"/repos/{platform_repo}/contents/connectors/{connector_name}?ref=main")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return response_json(404, {"error": f"Connector '{connector_name}' not found."})
+        error_body = e.read().decode() if e.fp else str(e)
+        return response_json(502, {"error": f"GitHub API error: {e.code} {error_body}"})
+
+    # Check for existing open removal PR
+    try:
+        prs = github_api("GET", f"/repos/{platform_repo}/pulls?state=open&per_page=100")
+        for pr in (prs or []):
+            head_ref = pr.get("head", {}).get("ref", "")
+            if head_ref.startswith(f"feat/remove-{connector_name}-"):
+                return response_json(409, {
+                    "error": f"Connector '{connector_name}' already has a pending removal request (PR #{pr['number']})."
+                })
+    except Exception:
+        pass
+
+    # Generate unique branch name
+    timestamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    branch_name = f"feat/remove-{connector_name}-{timestamp}"
+
+    # Dispatch removal workflow
+    try:
+        github_api(
+            "POST",
+            f"/repos/{platform_repo}/actions/workflows/remove-connector.yml/dispatches",
+            {
+                "ref": "main",
+                "inputs": {
+                    "connector_name": connector_name,
+                    "requested_by": email,
+                    "branch_name": branch_name,
+                },
+            },
+        )
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode() if e.fp else str(e)
+        return response_json(502, {"error": f"GitHub API error: {e.code} {error_body}"})
+
+    # Poll for run ID
+    time.sleep(2)
+    run_id = None
+    try:
+        runs = github_api(
+            "GET",
+            f"/repos/{platform_repo}/actions/workflows/remove-connector.yml/runs?per_page=1",
+        )
+        if runs and runs.get("workflow_runs"):
+            run_id = runs["workflow_runs"][0]["id"]
+    except Exception:
+        pass
+
+    return response_json(200, {
+        "message": "Removal workflow dispatched successfully",
+        "connector_name": connector_name,
+        "requested_by": email,
+        "run_id": run_id,
+        "run_url": f"https://github.com/{platform_repo}/actions/runs/{run_id}" if run_id else None,
+        "branch_name": branch_name,
     })
 
 
@@ -385,7 +519,9 @@ def handle_connectors(normalized):
         if e.code != 404:
             raise
 
-    # Pending connectors: open PRs with feat/onboard- branch prefix
+    active_names = {c["name"] for c in connectors}
+
+    # Pending connectors: open PRs with feat/onboard- or feat/remove- branch prefix
     try:
         prs = github_api(
             "GET",
@@ -394,32 +530,54 @@ def handle_connectors(normalized):
         if prs:
             for pr in prs:
                 head_ref = pr.get("head", {}).get("ref", "")
+                body = pr.get("body", "") or ""
+
+                # Determine if this is an onboard or remove PR
                 if head_ref.startswith("feat/onboard-"):
-                    name = head_ref.replace("feat/onboard-", "", 1)
-                    # Extract connector type from PR body if possible
-                    connector_type = None
-                    body = pr.get("body", "") or ""
-                    for line in body.split("\n"):
-                        if "**Type:**" in line:
-                            connector_type = line.split("**Type:**")[-1].strip()
-                            break
-                    connectors.append({
-                        "name": name,
-                        "connector_type": connector_type,
-                        "status": "pending",
-                        "pr_number": pr.get("number"),
-                        "pr_url": pr.get("html_url"),
-                        "requested_by": None,
-                    })
-                    # Extract requested_by from body
-                    for line in body.split("\n"):
-                        if "**Requested by:**" in line:
-                            connectors[-1]["requested_by"] = line.split("**Requested by:**")[-1].strip()
-                            break
+                    # Strip prefix and timestamp suffix to get connector name
+                    name = _extract_connector_name(head_ref, "feat/onboard-")
+                    # Skip if connector already active
+                    if name in active_names:
+                        continue
+                    status = "pending"
+                elif head_ref.startswith("feat/remove-"):
+                    name = _extract_connector_name(head_ref, "feat/remove-")
+                    status = "removing"
+                else:
+                    continue
+
+                connector_type = None
+                requested_by = None
+                for line in body.split("\n"):
+                    if "**Type:**" in line:
+                        connector_type = line.split("**Type:**")[-1].strip()
+                    if "**Requested by:**" in line:
+                        requested_by = line.split("**Requested by:**")[-1].strip()
+
+                connectors.append({
+                    "name": name,
+                    "connector_type": connector_type,
+                    "status": status,
+                    "pr_number": pr.get("number"),
+                    "pr_url": pr.get("html_url"),
+                    "requested_by": requested_by,
+                })
     except Exception:
         pass
 
     return response_json(200, {"connectors": connectors})
+
+
+def _extract_connector_name(branch_ref, prefix):
+    """Extract connector name from branch ref, stripping prefix and timestamp suffix."""
+    remainder = branch_ref[len(prefix):]
+    # Branch format: {name}-{YYYYMMDD-HHMMSS}
+    # Find the timestamp suffix (last 15 chars: YYYYMMDD-HHMMSS)
+    import re
+    match = re.match(r"^(.+)-\d{8}-\d{6}$", remainder)
+    if match:
+        return match.group(1)
+    return remainder
 
 
 def handle_run_status(normalized):
@@ -446,16 +604,18 @@ def handle_run_status(normalized):
     }
 
     if run.get("status") == "completed" and run.get("conclusion") == "success" and connector_name:
-        branch = f"feat/onboard-{connector_name}"
         try:
-            owner, repo = platform_repo.split("/", 1)
             prs = github_api(
                 "GET",
-                f"/repos/{platform_repo}/pulls?head={owner}:{branch}&state=open",
+                f"/repos/{platform_repo}/pulls?state=open&per_page=100",
             )
-            if prs:
-                result["pr_url"] = prs[0].get("html_url")
-                result["pr_number"] = prs[0].get("number")
+            for pr in (prs or []):
+                head_ref = pr.get("head", {}).get("ref", "")
+                if head_ref.startswith(f"feat/onboard-{connector_name}-") or \
+                   head_ref.startswith(f"feat/remove-{connector_name}-"):
+                    result["pr_url"] = pr.get("html_url")
+                    result["pr_number"] = pr.get("number")
+                    break
         except Exception:
             pass
 
@@ -495,6 +655,8 @@ def handler(event, context):
         return handle_config(event)
     elif method == "POST" and path == "/dispatch":
         return handle_dispatch(normalized)
+    elif method == "POST" and path == "/remove":
+        return handle_remove(normalized)
     elif method == "GET" and path == "/connectors":
         return handle_connectors(normalized)
     elif method == "GET" and path == "/run-status":
