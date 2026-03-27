@@ -412,7 +412,7 @@
             },
             polling_schedule: {
                 tooltip: "Cron expression for how often to poll the API (e.g., \"*/15 * * * *\" for every 15 min).",
-                validate: v => /^(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)\s+(\*|[0-9,\-\/]+)$/.test(v.trim()),
+                validate: v => /^([*0-9,\-\/]+)\s+([*0-9,\-\/]+)\s+([*0-9,\-\/]+)\s+([*0-9,\-\/]+)\s+([*0-9,\-\/]+)$/.test(v.trim()),
                 message: "Polling schedule must be a valid cron expression (e.g., \"*/15 * * * *\")."
             },
         };
