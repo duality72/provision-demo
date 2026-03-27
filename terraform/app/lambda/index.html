@@ -784,6 +784,10 @@
                 if (options.showRemove && c.status === "active") {
                     removeBtn = `<button class="btn-danger-sm" onclick="removeConnector('${c.name}', this)">Remove</button>`;
                 }
+                let cancelBtn = "";
+                if (c.pr_number && (c.status === "pending" || c.status === "removing")) {
+                    cancelBtn = `<button class="btn-secondary" style="padding:0.25rem 0.75rem;font-size:0.75rem" onclick="cancelPR(${c.pr_number}, this)">Cancel</button>`;
+                }
                 let statusLabel = "";
                 if (c.status === "removing") {
                     statusLabel = `<span class="status-badge queued">pending removal</span>`;
@@ -796,6 +800,7 @@
                     <div class="connector-right">
                         ${statusLabel}
                         ${typeBadge}
+                        ${cancelBtn}
                         ${removeBtn}
                     </div>
                 </div>`;
@@ -827,8 +832,12 @@
                 }
                 // Show result card
                 showRemovalResult(name, data);
-                // Refresh the connectors list
-                await loadConnectors();
+                // Poll until workflow completes, then refresh
+                if (data.run_id) {
+                    pollAndRefreshConnectors(data.run_id, name);
+                } else {
+                    await loadConnectors();
+                }
             } catch (e) {
                 alert(`Request failed: ${e.message}`);
                 btn.disabled = false;
@@ -850,6 +859,60 @@
             ].filter(Boolean).join("\n");
             document.getElementById("removal-details").value = details;
         }
+
+        function pollAndRefreshConnectors(runId, connectorName) {
+            let attempts = 0;
+            const maxAttempts = 36;
+            const timer = setInterval(async () => {
+                attempts++;
+                if (attempts > maxAttempts) {
+                    clearInterval(timer);
+                    await loadConnectors();
+                    return;
+                }
+                try {
+                    const params = new URLSearchParams({ run_id: runId, connector_name: connectorName });
+                    const resp = await fetch(`/run-status?${params}`);
+                    const data = await resp.json();
+                    if (data.status === "completed") {
+                        clearInterval(timer);
+                        await loadConnectors();
+                    }
+                } catch (e) {
+                    console.error("Poll error:", e);
+                }
+            }, 5000);
+        }
+
+        window.cancelPR = async function (prNumber, btn) {
+            if (!confirm("Cancel this request? The PR will be closed.")) return;
+
+            btn.disabled = true;
+            btn.textContent = "Cancelling...";
+
+            try {
+                const resp = await fetch("/cancel-pr", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${idToken}`
+                    },
+                    body: JSON.stringify({ pr_number: prNumber })
+                });
+                const data = await resp.json();
+                if (!resp.ok) {
+                    alert(data.error || "Cancel failed.");
+                    btn.disabled = false;
+                    btn.textContent = "Cancel";
+                    return;
+                }
+                await loadConnectors();
+            } catch (e) {
+                alert(`Request failed: ${e.message}`);
+                btn.disabled = false;
+                btn.textContent = "Cancel";
+            }
+        };
 
         window.copyRemovalDetails = function () {
             const ta = document.getElementById("removal-details");

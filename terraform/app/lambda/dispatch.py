@@ -482,6 +482,63 @@ def handle_remove(normalized):
     })
 
 
+def handle_cancel_pr(normalized):
+    """Close a PR and delete its branch."""
+    body = normalized["body"]
+    if normalized["isBase64Encoded"]:
+        body = base64.b64decode(body).decode()
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, TypeError):
+        return response_json(400, {"error": "Invalid JSON body"})
+
+    # Validate authorization
+    headers = normalized["headers"]
+    auth_header = None
+    for key, value in headers.items():
+        if key.lower() == "authorization":
+            auth_header = value
+            break
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return response_json(401, {"error": "Missing or invalid Authorization header"})
+
+    token = auth_header[7:]
+    try:
+        validate_cognito_token(token)
+    except Exception as e:
+        return response_json(401, {"error": f"Token validation failed: {str(e)}"})
+
+    pr_number = payload.get("pr_number")
+    if not pr_number:
+        return response_json(400, {"error": "pr_number is required"})
+
+    platform_repo = get_ssm_param(f"/{APP_NAME}/platform-repo")
+
+    try:
+        # Get PR details to find the branch
+        pr = github_api("GET", f"/repos/{platform_repo}/pulls/{pr_number}")
+        head_ref = pr.get("head", {}).get("ref", "")
+
+        # Only allow cancelling onboard/remove PRs
+        if not head_ref.startswith("feat/onboard-") and not head_ref.startswith("feat/remove-"):
+            return response_json(403, {"error": "Cannot cancel this PR"})
+
+        # Close the PR
+        github_api("PATCH", f"/repos/{platform_repo}/pulls/{pr_number}", {"state": "closed"})
+
+        # Delete the branch
+        try:
+            github_api("DELETE", f"/repos/{platform_repo}/git/refs/heads/{head_ref}")
+        except Exception:
+            pass  # Branch may already be deleted
+
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode() if e.fp else str(e)
+        return response_json(502, {"error": f"GitHub API error: {e.code} {error_body}"})
+
+    return response_json(200, {"message": "PR closed and branch deleted", "pr_number": pr_number})
+
+
 def handle_connectors(normalized):
     """List existing connectors (on main) and pending connector PRs."""
     platform_repo = get_ssm_param(f"/{APP_NAME}/platform-repo")
@@ -657,6 +714,8 @@ def handler(event, context):
         return handle_dispatch(normalized)
     elif method == "POST" and path == "/remove":
         return handle_remove(normalized)
+    elif method == "POST" and path == "/cancel-pr":
+        return handle_cancel_pr(normalized)
     elif method == "GET" and path == "/connectors":
         return handle_connectors(normalized)
     elif method == "GET" and path == "/run-status":
