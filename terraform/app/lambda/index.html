@@ -260,6 +260,13 @@
 
             <!-- Connectors Section -->
             <div id="connectors-section" class="hidden">
+                <div id="removal-result" class="card success-msg hidden">
+                    <div id="removal-result-content"></div>
+                    <div style="margin-top:0.75rem">
+                        <textarea id="removal-details" rows="3" readonly style="font-size:0.8125rem"></textarea>
+                        <button class="btn-secondary" style="margin-top:0.5rem" onclick="copyRemovalDetails()">Copy to Clipboard</button>
+                    </div>
+                </div>
                 <div class="card">
                     <h2>Active Connectors</h2>
                     <p>Connectors that have been merged and are live.</p>
@@ -730,6 +737,7 @@
             } else {
                 document.getElementById("form-section").classList.add("hidden");
                 document.getElementById("status-section").classList.add("hidden");
+                document.getElementById("removal-result").classList.add("hidden");
                 loadConnectors();
             }
         };
@@ -778,7 +786,7 @@
                 }
                 let statusLabel = "";
                 if (c.status === "removing") {
-                    statusLabel = `<span class="status-badge failure">removing</span>`;
+                    statusLabel = `<span class="status-badge queued">pending removal</span>`;
                 }
                 html += `<div class="connector-item">
                     <div class="connector-info">
@@ -817,6 +825,8 @@
                     btn.textContent = "Remove";
                     return;
                 }
+                // Show result card
+                showRemovalResult(name, data);
                 // Refresh the connectors list
                 await loadConnectors();
             } catch (e) {
@@ -824,6 +834,32 @@
                 btn.disabled = false;
                 btn.textContent = "Remove";
             }
+        };
+
+        function showRemovalResult(name, data) {
+            const card = document.getElementById("removal-result");
+            card.classList.remove("hidden");
+            document.getElementById("removal-result-content").innerHTML =
+                `<strong>Removal request created for "${name}"</strong> — awaiting PR approval.` +
+                (data.run_url ? ` <a class="link" href="${data.run_url}" target="_blank">View workflow</a>` : "");
+
+            const details = [
+                `Removal request created for connector: ${name}`,
+                data.run_url ? `Workflow: ${data.run_url}` : null,
+                `Requested by: ${data.requested_by}`,
+            ].filter(Boolean).join("\n");
+            document.getElementById("removal-details").value = details;
+        }
+
+        window.copyRemovalDetails = function () {
+            const ta = document.getElementById("removal-details");
+            ta.select();
+            navigator.clipboard.writeText(ta.value).then(() => {
+                const btn = ta.nextElementSibling;
+                const orig = btn.textContent;
+                btn.textContent = "Copied!";
+                setTimeout(() => { btn.textContent = orig; }, 2000);
+            });
         };
 
         // ── UI helpers ──────────────────────────────────
