@@ -741,11 +741,12 @@
                 const data = await resp.json();
                 const connectors = data.connectors || [];
 
-                const active = connectors.filter(c => c.status === "active");
                 const removing = connectors.filter(c => c.status === "removing");
+                const removingNames = new Set(removing.map(c => c.name));
+                const active = connectors.filter(c => c.status === "active" && !removingNames.has(c.name));
                 const pending = connectors.filter(c => c.status === "pending");
 
-                // Show active connectors with remove buttons, plus any pending removals
+                // Show active connectors (with remove buttons) and pending removals
                 renderConnectorList("active-connectors", [...active, ...removing], { showRemove: true });
                 renderConnectorList("pending-connectors", pending);
             } catch (e) {
