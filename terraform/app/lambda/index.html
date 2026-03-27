@@ -260,13 +260,6 @@
 
             <!-- Connectors Section -->
             <div id="connectors-section" class="hidden">
-                <div id="removal-result" class="card success-msg hidden">
-                    <div id="removal-result-content"></div>
-                    <div style="margin-top:0.75rem">
-                        <textarea id="removal-details" rows="3" readonly style="font-size:0.8125rem"></textarea>
-                        <button class="btn-secondary" style="margin-top:0.5rem" onclick="copyRemovalDetails()">Copy to Clipboard</button>
-                    </div>
-                </div>
                 <div class="card">
                     <h2>Active Connectors</h2>
                     <p>Connectors that have been merged and are live.</p>
@@ -737,7 +730,6 @@
             } else {
                 document.getElementById("form-section").classList.add("hidden");
                 document.getElementById("status-section").classList.add("hidden");
-                document.getElementById("removal-result").classList.add("hidden");
                 loadConnectors();
             }
         };
@@ -758,22 +750,6 @@
                 renderConnectorList("active-connectors", [...active, ...removing], { showRemove: true });
                 renderConnectorList("pending-connectors", pending);
 
-                // Show removal info card if there are pending removals
-                const removalCard = document.getElementById("removal-result");
-                if (removing.length > 0) {
-                    const names = removing.map(c => `"${c.name}"`).join(", ");
-                    const label = removing.length === 1 ? "Removal request pending" : "Removal requests pending";
-                    document.getElementById("removal-result-content").innerHTML =
-                        `<strong>${label} for ${names}</strong> — awaiting PR approval.`;
-                    const details = removing.map(c =>
-                        [`Pending removal: ${c.name}`, c.pr_url ? `PR: ${c.pr_url}` : null, c.requested_by ? `Requested by: ${c.requested_by}` : null].filter(Boolean).join("\n")
-                    ).join("\n\n");
-                    document.getElementById("removal-details").value = details;
-                    removalCard.classList.remove("hidden");
-                } else if (!removalCard.classList.contains("hidden")) {
-                    // Hide if no more pending removals (e.g. after cancel)
-                    removalCard.classList.add("hidden");
-                }
             } catch (e) {
                 document.getElementById("active-connectors").innerHTML = `<div class="empty-state">Failed to load connectors.</div>`;
                 document.getElementById("pending-connectors").innerHTML = `<div class="empty-state">Failed to load connectors.</div>`;
@@ -809,17 +785,30 @@
                 if (c.status === "removing") {
                     statusLabel = `<span class="status-badge queued">pending removal</span>`;
                 }
-                html += `<div class="connector-item">
-                    <div class="connector-info">
-                        <span class="connector-name">${c.name}</span>
-                        ${meta ? `<span class="connector-meta">${meta}</span>` : ""}
+                let inlineInfo = "";
+                if (c.status === "removing" && c.pr_url) {
+                    const detailId = `removal-detail-${c.pr_number}`;
+                    const details = [`Pending removal: ${c.name}`, `PR: ${c.pr_url}`, c.requested_by ? `Requested by: ${c.requested_by}` : null].filter(Boolean).join("\n");
+                    inlineInfo = `<div class="success-msg" style="margin-top:0.5rem;margin-bottom:0;padding:0.625rem 0.75rem;font-size:0.8125rem">
+                        <div style="margin-bottom:0.5rem"><strong>Pending removal</strong> — awaiting PR approval.</div>
+                        <textarea id="${detailId}" rows="2" readonly style="font-size:0.75rem;margin-bottom:0.375rem">${details}</textarea>
+                        <button class="btn-secondary" style="padding:0.2rem 0.625rem;font-size:0.7rem" onclick="copyField('${detailId}', this)">Copy to Clipboard</button>
+                    </div>`;
+                }
+                html += `<div style="border-bottom:1px solid #f1f5f9;padding-bottom:${c.status === 'removing' ? '0.75rem' : '0'}">
+                    <div class="connector-item" style="border-bottom:none">
+                        <div class="connector-info">
+                            <span class="connector-name">${c.name}</span>
+                            ${meta ? `<span class="connector-meta">${meta}</span>` : ""}
+                        </div>
+                        <div class="connector-right">
+                            ${statusLabel}
+                            ${typeBadge}
+                            ${cancelBtn}
+                            ${removeBtn}
+                        </div>
                     </div>
-                    <div class="connector-right">
-                        ${statusLabel}
-                        ${typeBadge}
-                        ${cancelBtn}
-                        ${removeBtn}
-                    </div>
+                    ${inlineInfo}
                 </div>`;
             }
             container.innerHTML = html;
@@ -847,8 +836,6 @@
                     btn.textContent = "Remove";
                     return;
                 }
-                // Show result card
-                showRemovalResult(name, data);
                 // Poll until workflow completes, then refresh
                 if (data.run_id) {
                     pollAndRefreshConnectors(data.run_id, name);
@@ -861,21 +848,6 @@
                 btn.textContent = "Remove";
             }
         };
-
-        function showRemovalResult(name, data) {
-            const card = document.getElementById("removal-result");
-            card.classList.remove("hidden");
-            document.getElementById("removal-result-content").innerHTML =
-                `<strong>Removal request created for "${name}"</strong> — awaiting PR approval.` +
-                (data.run_url ? ` <a class="link" href="${data.run_url}" target="_blank">View workflow</a>` : "");
-
-            const details = [
-                `Removal request created for connector: ${name}`,
-                data.run_url ? `Workflow: ${data.run_url}` : null,
-                `Requested by: ${data.requested_by}`,
-            ].filter(Boolean).join("\n");
-            document.getElementById("removal-details").value = details;
-        }
 
         function pollAndRefreshConnectors(runId, connectorName) {
             let attempts = 0;
@@ -931,11 +903,10 @@
             }
         };
 
-        window.copyRemovalDetails = function () {
-            const ta = document.getElementById("removal-details");
+        window.copyField = function (fieldId, btn) {
+            const ta = document.getElementById(fieldId);
             ta.select();
             navigator.clipboard.writeText(ta.value).then(() => {
-                const btn = ta.nextElementSibling;
                 const orig = btn.textContent;
                 btn.textContent = "Copied!";
                 setTimeout(() => { btn.textContent = orig; }, 2000);
