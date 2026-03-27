@@ -11,6 +11,8 @@ Provision Demo is a two-repo system for self-service connector onboarding. A web
 
 ## Data Flow
 
+### Onboarding
+
 ```
 ┌─────────┐     PKCE Auth     ┌─────────┐
 │ Browser  │ ───────────────> │ Cognito  │
@@ -21,7 +23,7 @@ Provision Demo is a two-repo system for self-service connector onboarding. A web
      │ POST /dispatch + Bearer token
      │
 ┌────▼─────┐                  ┌──────────────┐
-│  Lambda   │ ──── JWT ─────> │ GitHub API   │
+│  Lambda   │ ── check dup ─> │ GitHub API   │
 │ dispatch  │    (App auth)   │              │
 │           │ workflow_dispatch│              │
 └────┬─────┘                  └──────┬───────┘
@@ -42,29 +44,99 @@ Provision Demo is a two-repo system for self-service connector onboarding. A web
      │ <─────────────────────────────┘
 ```
 
-## Component Details
+### Removal
 
-### Lambda Function
+```
+┌─────────┐   POST /remove    ┌──────────┐
+│ Browser  │ ───────────────> │  Lambda   │
+│  (SPA)   │                  │          │
+└────┬─────┘                  └────┬─────┘
+     │                             │
+     │                             │ verify exists
+     │                             │ check no dup removal PR
+     │                             │ workflow_dispatch
+     │                             │
+     │                        ┌────▼─────────┐
+     │                        │ GitHub       │
+     │                        │ Actions      │
+     │                        │              │
+     │                        │ - git rm -r  │
+     │                        │ - commit     │
+     │                        │ - open PR    │
+     │  auto-refresh          └──────┬───────┘
+     │ <─────────────────────────────┘
+```
 
-The Lambda function (`dispatch.py`) serves four routes:
+## Lambda Function
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/` | Serves the SPA HTML page |
-| GET | `/config` | Returns age public key and Cognito settings |
-| POST | `/dispatch` | Validates JWT, dispatches GitHub Actions workflow |
-| GET | `/run-status` | Checks workflow run status and finds resulting PR |
+The Lambda function (`dispatch.py`) serves the following routes:
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/` | No | Serves the SPA HTML page |
+| GET | `/config` | No | Returns age public key and Cognito settings |
+| POST | `/dispatch` | JWT | Validates connector, checks for duplicates, dispatches onboard workflow |
+| POST | `/remove` | JWT | Validates connector exists, dispatches removal workflow |
+| POST | `/cancel-pr` | JWT | Closes a pending PR and deletes its branch |
+| GET | `/connectors` | No | Lists active, pending onboard, and pending removal connectors |
+| GET | `/run-status` | No | Checks workflow run status and finds resulting PR |
 
 Configuration:
 - Runtime: Python 3.12
 - Handler: `dispatch.handler`
 - Memory: 256 MB, Timeout: 30s
-- Layer: PyJWT + cryptography (built via `build-layer.sh`)
-- Invoked by ALB with host-header routing
+- Layer: PyJWT + cryptography (built via `build-layer.sh` for Linux x86_64)
+- Invoked via Lambda Function URL
 
 All responses include CORS headers for browser compatibility. The Lambda reads configuration from SSM Parameter Store and secrets from Secrets Manager, with in-memory caching (5-minute TTL) to minimize API calls.
 
-### Cognito
+### Duplicate Detection
+
+Before dispatching an onboard workflow, the Lambda checks:
+1. Whether a connector directory already exists on main (`GET /repos/.../contents/connectors/{name}`)
+2. Whether any open PR has a branch matching `feat/onboard-{name}-*`
+
+Before dispatching a removal workflow, the Lambda checks:
+1. Whether the connector directory exists on main (404 = not found error)
+2. Whether any open PR has a branch matching `feat/remove-{name}-*`
+
+### Branch Naming
+
+All branches include a UTC timestamp suffix to prevent conflicts:
+- Onboarding: `feat/onboard-{connector_name}-YYYYMMDD-HHMMSS`
+- Removal: `feat/remove-{connector_name}-YYYYMMDD-HHMMSS`
+
+This allows a connector to be added, removed, and re-added without branch name collisions.
+
+### Connector Name Extraction
+
+The `/connectors` endpoint parses branch names to extract the connector name by stripping the prefix and timestamp suffix using a regex: `^(.+)-\d{8}-\d{6}$`. This supports connector names with hyphens (e.g., `data-lake-raw`).
+
+## Frontend SPA
+
+The SPA (`index.html`) is a vanilla JavaScript application with two tabs:
+
+### Onboard Tab
+- Connector type dropdown (S3, PostgreSQL, REST API, SFTP)
+- Dynamic form fields based on type selection
+- Hover tooltips (?) on every field with format guidance
+- Client-side validation per field type:
+  - S3: bucket name format (3-63 chars, lowercase), region dropdown
+  - PostgreSQL/SFTP: port as number input (1-65535), hostname format
+  - REST API: URL format validation, cron expression validation
+- age encryption of the full payload in the browser
+- Workflow status polling with PR link on completion
+- Error display with run URL link for failed workflows
+
+### Connectors Tab
+- **Active Connectors**: Merged connectors with Remove buttons
+- **Pending Removal**: Connectors with open removal PRs, shown with "pending removal" badge, Cancel button, and inline info box
+- **Pending Connectors**: Open onboard PRs with type badge, Cancel button, and inline info box
+- Each pending item shows PR link, requester, and a Copy to Clipboard button
+- Deduplication: if a connector appears as both active and pending removal, only the removal entry is shown
+- Auto-refresh: the list refreshes when a removal workflow completes
+
+## Cognito
 
 - User pool with email-based sign-in
 - PKCE-only client (no client secret, public client)
@@ -72,7 +144,7 @@ All responses include CORS headers for browser compatibility. The Lambda reads c
 - OAuth2 scopes: openid, email, profile
 - Explicit auth flows: SRP and refresh token
 
-### GitHub App Authentication
+## GitHub App Authentication
 
 The Lambda authenticates to GitHub as a GitHub App, not using a personal access token:
 
@@ -80,9 +152,9 @@ The Lambda authenticates to GitHub as a GitHub App, not using a personal access 
 2. Generate JWT signed with RS256 (`iss` = App ID, 10-minute expiry)
 3. Exchange JWT for an installation access token
 4. Cache the installation token for 55 minutes (tokens expire at 60 minutes)
-5. Use the token for workflow dispatch and status queries
+5. Use the token for workflow dispatch, status queries, PR management, and content listing
 
-### KMS / SOPS
+## KMS / SOPS
 
 A dedicated KMS key is provisioned for SOPS encryption:
 
@@ -91,12 +163,12 @@ A dedicated KMS key is provisioned for SOPS encryption:
 - GitHub Actions role needs both `kms:Encrypt` and `kms:Decrypt`
 - Automatic key rotation is enabled
 
-### Age Encryption
+## Age Encryption
 
 Secrets are encrypted client-side in the browser before they leave the user's machine:
 
 1. Frontend fetches the age public key from `/config` (stored in SSM Parameter Store)
-2. The `age-encryption` JavaScript library encrypts the full payload
+2. The `age-encryption` JavaScript library (loaded from esm.sh CDN) encrypts the full payload
 3. Ciphertext is base64-encoded and sent as `encrypted_payload` in the dispatch request
 4. The GitHub Actions workflow decrypts using the age secret key (stored as a GitHub Actions secret)
 
@@ -106,7 +178,7 @@ This ensures that the Lambda function and any network intermediary never see pla
 
 ### Encryption Layers
 
-1. **Transit**: HTTPS (ALB TLS termination) for all browser-to-Lambda communication
+1. **Transit**: HTTPS for all browser-to-Lambda communication (Lambda Function URL)
 2. **Application**: Age public-key encryption for connector secrets, applied in the browser
 3. **At rest**: SOPS + KMS encryption for secrets stored in the platform repository
 4. **AWS**: Secrets Manager encryption for the GitHub App private key and age secret key
@@ -135,23 +207,27 @@ The PKCE flow prevents authorization code interception attacks:
 | Age secret key | AWS Secrets Manager + GitHub Actions secret |
 | Age public key | SSM Parameter Store (not sensitive) |
 | GitHub App ID | SSM Parameter Store (not sensitive) |
-| Cognito client ID | Lambda environment variable (not sensitive) |
+| Cognito client ID | SSM Parameter Store (not sensitive) |
 
-## Infrastructure Dependencies
-
-The following resources must exist before deploying:
-
-1. **VPC** with subnets for the ALB
-2. **Application Load Balancer** with an HTTPS listener (TLS certificate)
-3. **Route53 hosted zone** for the application domain
-4. **GitHub App** created and installed on the target organization
-5. **Platform repository** (`provision-demo-platform`) with the `onboard-connector.yml` workflow
+## Infrastructure
 
 ### Terraform State
 
-Two independent Terraform state files:
+Three independent Terraform configurations:
 
-1. **terraform/app/**: AWS infrastructure (Lambda, Cognito, IAM, KMS, Secrets Manager, SSM, Route53, ALB listener rule)
-2. **terraform/github/**: GitHub resources (Actions secrets, App installation binding)
+1. **terraform/bootstrap/**: S3 state bucket, DynamoDB lock table, OIDC provider, CI IAM roles
+2. **terraform/app/**: AWS infrastructure (Lambda, Cognito, IAM, KMS, Secrets Manager, SSM)
+3. **terraform/github/**: GitHub resources (Actions secrets, branch protection)
 
-This separation allows GitHub configuration to be updated independently of the AWS infrastructure, and avoids needing both AWS and GitHub credentials in the same Terraform run.
+This separation allows each layer to be updated independently and avoids needing all credentials in the same Terraform run.
+
+### CI/CD
+
+Both repos use GitHub Actions with OIDC authentication (no long-lived AWS keys):
+
+- **Pull requests**: `terraform-plan.yml` runs plan on changed directories and comments the result on the PR
+- **Merge to main**: `terraform-apply.yml` applies changes
+- **Path filtering**: Only runs for directories with changes (`terraform/app/` or `terraform/github/`)
+- **Lambda layer**: CI builds the layer from source before plan/apply
+
+All actions use Node.js 24 compatible versions.
