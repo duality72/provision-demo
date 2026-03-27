@@ -230,13 +230,45 @@
         .btn-danger-sm:hover { background: #fee2e2; }
         .btn-danger-sm:disabled { opacity: 0.5; cursor: not-allowed; }
         .connector-right { display: flex; align-items: center; gap: 0.75rem; }
-        .field-hint {
-            display: block;
+        .tooltip-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1rem;
+            height: 1rem;
+            border-radius: 50%;
+            background: #e2e8f0;
+            color: #64748b;
+            font-size: 0.625rem;
+            font-weight: 700;
+            cursor: help;
+            margin-left: 0.375rem;
+            position: relative;
+            vertical-align: middle;
+        }
+        .tooltip-icon::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: calc(100% + 6px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1e293b;
+            color: #fff;
             font-size: 0.7rem;
             font-weight: 400;
-            color: #94a3b8;
-            margin-top: -0.25rem;
-            margin-bottom: 0.5rem;
+            padding: 0.375rem 0.625rem;
+            border-radius: 0.375rem;
+            white-space: normal;
+            width: max-content;
+            max-width: 240px;
+            line-height: 1.4;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s;
+            z-index: 10;
+        }
+        .tooltip-icon:hover::after {
+            opacity: 1;
         }
         .empty-state {
             text-align: center;
@@ -288,8 +320,7 @@
 
                     <div id="form-error" class="error-msg hidden"></div>
 
-                    <label for="connector_type">Connector Type</label>
-                    <span class="field-hint">The type of data source or service this connector integrates with.</span>
+                    <label for="connector_type">Connector Type<span class="tooltip-icon" data-tooltip="The type of data source or service this connector integrates with.">?</span></label>
                     <select id="connector_type" onchange="renderDynamicFields()">
                         <option value="">Select a type...</option>
                         <option value="s3">S3</option>
@@ -298,8 +329,7 @@
                         <option value="sftp">SFTP</option>
                     </select>
 
-                    <label for="connector_name">Connector Name</label>
-                    <span class="field-hint">A unique identifier for this connector. Lowercase letters, numbers, and hyphens only.</span>
+                    <label for="connector_name">Connector Name<span class="tooltip-icon" data-tooltip="A unique identifier for this connector. Lowercase letters, numbers, and hyphens only.">?</span></label>
                     <input type="text" id="connector_name" placeholder="e.g., analytics-warehouse" pattern="[a-z0-9\-]+" title="Lowercase letters, numbers, and hyphens only">
 
                     <div id="dynamic-fields"></div>
@@ -563,13 +593,14 @@
                     input.id = `config_${field}`;
                     input.name = `config_${field}`;
                     input.required = true;
-                    group.appendChild(label);
                     if (validator?.tooltip) {
-                        const hint = document.createElement("span");
-                        hint.className = "field-hint";
-                        hint.textContent = validator.tooltip;
-                        group.appendChild(hint);
+                        const tip = document.createElement("span");
+                        tip.className = "tooltip-icon";
+                        tip.setAttribute("data-tooltip", validator.tooltip);
+                        tip.textContent = "?";
+                        label.appendChild(tip);
                     }
+                    group.appendChild(label);
                     group.appendChild(input);
                 }
                 container.appendChild(group);
@@ -596,13 +627,14 @@
                     input.name = `secret_${field}`;
                     input.placeholder = field;
                     input.required = true;
-                    group.appendChild(label);
                     if (SECRET_TOOLTIPS[field]) {
-                        const hint = document.createElement("span");
-                        hint.className = "field-hint";
-                        hint.textContent = SECRET_TOOLTIPS[field];
-                        group.appendChild(hint);
+                        const tip = document.createElement("span");
+                        tip.className = "tooltip-icon";
+                        tip.setAttribute("data-tooltip", SECRET_TOOLTIPS[field]);
+                        tip.textContent = "?";
+                        label.appendChild(tip);
                     }
+                    group.appendChild(label);
                     group.appendChild(input);
                 }
                 container.appendChild(group);
