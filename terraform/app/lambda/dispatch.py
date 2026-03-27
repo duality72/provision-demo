@@ -348,6 +348,80 @@ def handle_dispatch(normalized):
     })
 
 
+def handle_connectors(normalized):
+    """List existing connectors (on main) and pending connector PRs."""
+    platform_repo = get_ssm_param(f"/{APP_NAME}/platform-repo")
+
+    connectors = []
+
+    # Existing connectors: list directories under connectors/ on main
+    try:
+        contents = github_api(
+            "GET",
+            f"/repos/{platform_repo}/contents/connectors?ref=main",
+        )
+        if isinstance(contents, list):
+            for item in contents:
+                if item.get("type") == "dir":
+                    name = item["name"]
+                    # Try to read config.json for connector type
+                    connector_type = None
+                    try:
+                        config_resp = github_api(
+                            "GET",
+                            f"/repos/{platform_repo}/contents/connectors/{name}/config.json?ref=main",
+                        )
+                        if config_resp and config_resp.get("content"):
+                            config_data = json.loads(base64.b64decode(config_resp["content"]))
+                            connector_type = config_data.get("connector_type")
+                    except Exception:
+                        pass
+                    connectors.append({
+                        "name": name,
+                        "connector_type": connector_type,
+                        "status": "active",
+                    })
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise
+
+    # Pending connectors: open PRs with feat/onboard- branch prefix
+    try:
+        prs = github_api(
+            "GET",
+            f"/repos/{platform_repo}/pulls?state=open&per_page=100",
+        )
+        if prs:
+            for pr in prs:
+                head_ref = pr.get("head", {}).get("ref", "")
+                if head_ref.startswith("feat/onboard-"):
+                    name = head_ref.replace("feat/onboard-", "", 1)
+                    # Extract connector type from PR body if possible
+                    connector_type = None
+                    body = pr.get("body", "") or ""
+                    for line in body.split("\n"):
+                        if "**Type:**" in line:
+                            connector_type = line.split("**Type:**")[-1].strip()
+                            break
+                    connectors.append({
+                        "name": name,
+                        "connector_type": connector_type,
+                        "status": "pending",
+                        "pr_number": pr.get("number"),
+                        "pr_url": pr.get("html_url"),
+                        "requested_by": None,
+                    })
+                    # Extract requested_by from body
+                    for line in body.split("\n"):
+                        if "**Requested by:**" in line:
+                            connectors[-1]["requested_by"] = line.split("**Requested by:**")[-1].strip()
+                            break
+    except Exception:
+        pass
+
+    return response_json(200, {"connectors": connectors})
+
+
 def handle_run_status(normalized):
     """Check the status of a workflow run and find the resulting PR."""
     params = normalized["queryStringParameters"]
@@ -421,6 +495,8 @@ def handler(event, context):
         return handle_config(event)
     elif method == "POST" and path == "/dispatch":
         return handle_dispatch(normalized)
+    elif method == "GET" and path == "/connectors":
+        return handle_connectors(normalized)
     elif method == "GET" and path == "/run-status":
         return handle_run_status(normalized)
     else:
