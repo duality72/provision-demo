@@ -773,7 +773,7 @@
                 }
                 let removeBtn = "";
                 if (options.showRemove && c.status === "active") {
-                    removeBtn = `<button class="btn-danger-sm" onclick="removeConnector('${c.name}')">Remove</button>`;
+                    removeBtn = `<button class="btn-danger-sm" onclick="removeConnector('${c.name}', this)">Remove</button>`;
                 }
                 let statusLabel = "";
                 if (c.status === "removing") {
@@ -794,12 +794,11 @@
             container.innerHTML = html;
         }
 
-        window.removeConnector = async function (name) {
+        window.removeConnector = async function (name, btn) {
             if (!confirm(`Remove connector "${name}"? This will create a PR for review.`)) return;
 
-            // Disable the button that was clicked
-            event.target.disabled = true;
-            event.target.textContent = "Removing...";
+            btn.disabled = true;
+            btn.textContent = "Removing...";
 
             try {
                 const resp = await fetch("/remove", {
@@ -813,16 +812,16 @@
                 const data = await resp.json();
                 if (!resp.ok) {
                     alert(data.error || "Removal failed.");
-                    event.target.disabled = false;
-                    event.target.textContent = "Remove";
+                    btn.disabled = false;
+                    btn.textContent = "Remove";
                     return;
                 }
                 // Refresh the connectors list
                 await loadConnectors();
             } catch (e) {
                 alert(`Request failed: ${e.message}`);
-                event.target.disabled = false;
-                event.target.textContent = "Remove";
+                btn.disabled = false;
+                btn.textContent = "Remove";
             }
         };
 
