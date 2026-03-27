@@ -178,6 +178,51 @@
         .result-row:last-child { border-bottom: none; }
         .result-label { color: #64748b; }
         .result-value { font-weight: 500; }
+        .tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 1.5rem;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        .tab {
+            padding: 0.625rem 1.25rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #64748b;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: color 0.15s, border-color 0.15s;
+            background: none;
+            border-top: none;
+            border-left: none;
+            border-right: none;
+            border-radius: 0;
+        }
+        .tab:hover { color: #1e293b; }
+        .tab.active {
+            color: #2563eb;
+            border-bottom-color: #2563eb;
+        }
+        .connector-list { list-style: none; }
+        .connector-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid #f1f5f9;
+            font-size: 0.875rem;
+        }
+        .connector-item:last-child { border-bottom: none; }
+        .connector-info { display: flex; flex-direction: column; gap: 0.25rem; }
+        .connector-name { font-weight: 500; color: #0f172a; }
+        .connector-meta { font-size: 0.75rem; color: #94a3b8; }
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: #94a3b8;
+            font-size: 0.875rem;
+        }
     </style>
 </head>
 <body>
@@ -192,6 +237,26 @@
                 <h2>Sign In</h2>
                 <p>Authenticate with your organization account to onboard a new connector.</p>
                 <button class="btn-primary" id="login-btn" onclick="startLogin()">Sign in with Cognito</button>
+            </div>
+
+            <!-- Tab Navigation -->
+            <div id="tab-nav" class="tabs hidden">
+                <button class="tab active" id="tab-onboard" onclick="switchTab('onboard')">Onboard</button>
+                <button class="tab" id="tab-connectors" onclick="switchTab('connectors')">Connectors</button>
+            </div>
+
+            <!-- Connectors Section -->
+            <div id="connectors-section" class="hidden">
+                <div class="card">
+                    <h2>Active Connectors</h2>
+                    <p>Connectors that have been merged and are live.</p>
+                    <div id="active-connectors"><div class="empty-state"><span class="spinner"></span> Loading...</div></div>
+                </div>
+                <div class="card">
+                    <h2>Pending Connectors</h2>
+                    <p>Connector onboarding requests awaiting review.</p>
+                    <div id="pending-connectors"><div class="empty-state"><span class="spinner"></span> Loading...</div></div>
+                </div>
             </div>
 
             <!-- Form Section -->
@@ -639,9 +704,66 @@
             hideError();
         };
 
+        // ── Tab switching ────────────────────────────────
+        window.switchTab = function (tab) {
+            document.getElementById("tab-onboard").classList.toggle("active", tab === "onboard");
+            document.getElementById("tab-connectors").classList.toggle("active", tab === "connectors");
+            document.getElementById("form-section").classList.toggle("hidden", tab !== "onboard");
+            document.getElementById("connectors-section").classList.toggle("hidden", tab !== "connectors");
+            if (tab === "connectors") {
+                loadConnectors();
+            }
+        };
+
+        async function loadConnectors() {
+            try {
+                const resp = await fetch("/connectors");
+                if (!resp.ok) throw new Error(`Failed: ${resp.status}`);
+                const data = await resp.json();
+                const connectors = data.connectors || [];
+
+                const active = connectors.filter(c => c.status === "active");
+                const pending = connectors.filter(c => c.status === "pending");
+
+                renderConnectorList("active-connectors", active, false);
+                renderConnectorList("pending-connectors", pending, true);
+            } catch (e) {
+                document.getElementById("active-connectors").innerHTML = `<div class="empty-state">Failed to load connectors.</div>`;
+                document.getElementById("pending-connectors").innerHTML = `<div class="empty-state">Failed to load connectors.</div>`;
+            }
+        }
+
+        function renderConnectorList(containerId, items, showPR) {
+            const container = document.getElementById(containerId);
+            if (items.length === 0) {
+                container.innerHTML = `<div class="empty-state">None found.</div>`;
+                return;
+            }
+            let html = "";
+            for (const c of items) {
+                const typeBadge = c.connector_type
+                    ? `<span class="status-badge ${c.status === 'active' ? 'success' : 'queued'}">${c.connector_type}</span>`
+                    : "";
+                let meta = "";
+                if (showPR && c.pr_url) {
+                    meta += `<a class="link" href="${c.pr_url}" target="_blank">PR #${c.pr_number}</a>`;
+                    if (c.requested_by) meta += ` &middot; ${c.requested_by}`;
+                }
+                html += `<div class="connector-item">
+                    <div class="connector-info">
+                        <span class="connector-name">${c.name}</span>
+                        ${meta ? `<span class="connector-meta">${meta}</span>` : ""}
+                    </div>
+                    ${typeBadge}
+                </div>`;
+            }
+            container.innerHTML = html;
+        }
+
         // ── UI helpers ──────────────────────────────────
         function showFormSection() {
             document.getElementById("auth-section").classList.add("hidden");
+            document.getElementById("tab-nav").classList.remove("hidden");
             document.getElementById("form-section").classList.remove("hidden");
         }
 
