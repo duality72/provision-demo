@@ -757,6 +757,23 @@
                 // Show active connectors (with remove buttons) and pending removals
                 renderConnectorList("active-connectors", [...active, ...removing], { showRemove: true });
                 renderConnectorList("pending-connectors", pending);
+
+                // Show removal info card if there are pending removals
+                const removalCard = document.getElementById("removal-result");
+                if (removing.length > 0) {
+                    const names = removing.map(c => `"${c.name}"`).join(", ");
+                    const label = removing.length === 1 ? "Removal request pending" : "Removal requests pending";
+                    document.getElementById("removal-result-content").innerHTML =
+                        `<strong>${label} for ${names}</strong> — awaiting PR approval.`;
+                    const details = removing.map(c =>
+                        [`Pending removal: ${c.name}`, c.pr_url ? `PR: ${c.pr_url}` : null, c.requested_by ? `Requested by: ${c.requested_by}` : null].filter(Boolean).join("\n")
+                    ).join("\n\n");
+                    document.getElementById("removal-details").value = details;
+                    removalCard.classList.remove("hidden");
+                } else if (!removalCard.classList.contains("hidden")) {
+                    // Hide if no more pending removals (e.g. after cancel)
+                    removalCard.classList.add("hidden");
+                }
             } catch (e) {
                 document.getElementById("active-connectors").innerHTML = `<div class="empty-state">Failed to load connectors.</div>`;
                 document.getElementById("pending-connectors").innerHTML = `<div class="empty-state">Failed to load connectors.</div>`;
