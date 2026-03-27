@@ -663,6 +663,7 @@
                 } else {
                     badge.className = "status-badge failure";
                     badge.textContent = `Failed: ${data.conclusion}`;
+                    showFailureResult(data);
                 }
             } else if (data.status === "queued") {
                 badge.className = "status-badge queued";
@@ -681,26 +682,28 @@
             if (data.pr_url) {
                 html += `<div class="result-row"><span class="result-label">Pull Request</span><a class="link" href="${data.pr_url}" target="_blank">#${data.pr_number}</a></div>`;
             }
-            html += `<div class="result-row"><span class="result-label">Run URL</span><a class="link" href="${data.run_url}" target="_blank">View Run</a></div>`;
             document.getElementById("result-content").innerHTML = html;
 
             const details = [
                 `Connector onboarded successfully — awaiting PR approval.`,
-                `Run: ${data.run_url}`,
                 data.pr_url ? `PR: ${data.pr_url}` : null
             ].filter(Boolean).join("\n");
             document.getElementById("access-details").value = details;
         }
 
+        function showFailureResult(data) {
+            const resultCard = document.getElementById("result-card");
+            resultCard.classList.remove("hidden");
+
+            let html = `<div class="error-msg" style="margin-bottom:0.5rem">Workflow failed. Check the run log for details.</div>`;
+            html += `<div class="result-row"><span class="result-label">Run URL</span><a class="link" href="${data.run_url}" target="_blank">View Run</a></div>`;
+            document.getElementById("result-content").innerHTML = html;
+            document.getElementById("access-details").value = `Workflow failed.\nRun: ${data.run_url}`;
+        }
+
         window.copyAccessDetails = function () {
-            const ta = document.getElementById("access-details");
-            ta.select();
-            navigator.clipboard.writeText(ta.value).then(() => {
-                const btn = ta.nextElementSibling;
-                const orig = btn.textContent;
-                btn.textContent = "Copied!";
-                setTimeout(() => { btn.textContent = orig; }, 2000);
-            });
+            const btn = document.getElementById("access-details").nextElementSibling;
+            copyField("access-details", btn);
         };
 
         window.resetForm = function () {
@@ -786,16 +789,23 @@
                     statusLabel = `<span class="status-badge queued">pending removal</span>`;
                 }
                 let inlineInfo = "";
-                if (c.status === "removing" && c.pr_url) {
-                    const detailId = `removal-detail-${c.pr_number}`;
-                    const details = [`Pending removal: ${c.name}`, `PR: ${c.pr_url}`, c.requested_by ? `Requested by: ${c.requested_by}` : null].filter(Boolean).join("\n");
+                if ((c.status === "removing" || c.status === "pending") && c.pr_url) {
+                    const detailId = `detail-${c.pr_number}`;
+                    const label = c.status === "removing" ? "Pending removal" : "Pending onboarding";
+                    const details = [
+                        `${label}: ${c.name}`,
+                        c.connector_type ? `Type: ${c.connector_type}` : null,
+                        `PR: ${c.pr_url}`,
+                        c.requested_by ? `Requested by: ${c.requested_by}` : null,
+                    ].filter(Boolean).join("\n");
                     inlineInfo = `<div class="success-msg" style="margin-top:0.5rem;margin-bottom:0;padding:0.625rem 0.75rem;font-size:0.8125rem">
-                        <div style="margin-bottom:0.5rem"><strong>Pending removal</strong> — awaiting PR approval.</div>
+                        <div style="margin-bottom:0.5rem"><strong>${label}</strong> — awaiting PR approval.</div>
                         <textarea id="${detailId}" rows="2" readonly style="font-size:0.75rem;margin-bottom:0.375rem">${details}</textarea>
                         <button class="btn-secondary" style="padding:0.2rem 0.625rem;font-size:0.7rem" onclick="copyField('${detailId}', this)">Copy to Clipboard</button>
                     </div>`;
                 }
-                html += `<div style="border-bottom:1px solid #f1f5f9;padding-bottom:${c.status === 'removing' ? '0.75rem' : '0'}">
+                const hasInfo = c.status === "removing" || c.status === "pending";
+                html += `<div style="border-bottom:1px solid #f1f5f9;padding-bottom:${hasInfo ? '0.75rem' : '0'}">
                     <div class="connector-item" style="border-bottom:none">
                         <div class="connector-info">
                             <span class="connector-name">${c.name}</span>
