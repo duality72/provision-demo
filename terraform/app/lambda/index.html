@@ -479,7 +479,7 @@
 
             let encryptedBase64;
             try {
-                const ageModule = await import("https://cdn.jsdelivr.net/npm/age-encryption@0.3.0/dist/index.js");
+                const ageModule = await import("https://esm.sh/age-encryption@0.3.0");
                 const { Encrypter } = ageModule;
                 const encrypter = new Encrypter();
                 encrypter.addRecipient(appConfig.age_public_key);
