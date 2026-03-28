@@ -300,6 +300,7 @@
 
             <!-- Connectors Section -->
             <div id="connectors-section" class="hidden">
+                <div id="connectors-error" class="error-msg hidden" style="margin-bottom:1rem"></div>
                 <div class="card">
                     <h2>Active Connectors</h2>
                     <p>Connectors that have been merged and are live.</p>
@@ -878,6 +879,7 @@
         };
 
         async function loadConnectors() {
+            hideConnectorsError();
             try {
                 const resp = await fetch("/connectors");
                 if (!resp.ok) throw new Error(`Failed: ${resp.status}`);
@@ -981,11 +983,12 @@
                 });
                 const data = await resp.json();
                 if (!resp.ok) {
-                    alert(data.error || "Removal failed.");
+                    showConnectorsError(data.error || "Removal failed.");
                     btn.disabled = false;
                     btn.textContent = "Remove";
                     return;
                 }
+                hideConnectorsError();
                 // Poll until workflow completes, then refresh
                 if (data.run_id) {
                     pollAndRefreshConnectors(data.run_id, name);
@@ -993,7 +996,7 @@
                     await loadConnectors();
                 }
             } catch (e) {
-                alert(`Request failed: ${e.message}`);
+                showConnectorsError(`Request failed: ${e.message}`);
                 btn.disabled = false;
                 btn.textContent = "Remove";
             }
@@ -1040,18 +1043,29 @@
                 });
                 const data = await resp.json();
                 if (!resp.ok) {
-                    alert(data.error || "Cancel failed.");
+                    showConnectorsError(data.error || "Cancel failed.");
                     btn.disabled = false;
                     btn.textContent = "Cancel";
                     return;
                 }
+                hideConnectorsError();
                 await loadConnectors();
             } catch (e) {
-                alert(`Request failed: ${e.message}`);
+                showConnectorsError(`Request failed: ${e.message}`);
                 btn.disabled = false;
                 btn.textContent = "Cancel";
             }
         };
+
+        function showConnectorsError(msg) {
+            const el = document.getElementById("connectors-error");
+            el.textContent = msg;
+            el.classList.remove("hidden");
+        }
+
+        function hideConnectorsError() {
+            document.getElementById("connectors-error").classList.add("hidden");
+        }
 
         window.copyField = function (fieldId, btn) {
             const ta = document.getElementById(fieldId);
@@ -1085,15 +1099,6 @@
             await loadConfig();
 
             const params = new URLSearchParams(window.location.search);
-
-            // Skip auth for local testing
-            if (params.get("noauth") === "1") {
-                idToken = "dev-token";
-                document.getElementById("user-info").textContent = "dev@localhost";
-                showFormSection();
-                window.history.replaceState({}, "", "/");
-                return;
-            }
 
             // Handle OAuth callback
             const code = params.get("code");

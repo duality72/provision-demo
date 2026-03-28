@@ -8,3 +8,4 @@ __pycache__/
 *.zip
 .env
 lambda-layer/
+age-key.txt
