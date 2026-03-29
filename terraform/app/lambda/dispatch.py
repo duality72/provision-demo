@@ -629,6 +629,46 @@ def _list_connectors_internal():
     return {"connectors": connectors}
 
 
+def _prepare_onboard_internal(params):
+    """Validate config for onboarding and return handoff data."""
+    connector_name = params.get("connector_name", "").strip()
+    connector_type = params.get("connector_type", "").strip()
+    config = params.get("config", {})
+
+    if not connector_name:
+        return {"error": "connector_name is required"}
+    if connector_type not in CONNECTOR_TYPES:
+        return {"error": f"Invalid connector_type. Must be one of: {', '.join(sorted(CONNECTOR_TYPES))}"}
+
+    platform_repo = get_ssm_param(f"/{APP_NAME}/platform-repo")
+
+    # Check if connector already exists
+    try:
+        github_api("GET", f"/repos/{platform_repo}/contents/connectors/{connector_name}?ref=main")
+        return {"error": f"Connector '{connector_name}' already exists. Remove it first before re-adding."}
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            return {"error": f"GitHub API error: {e.code}"}
+
+    # Check for open onboard PRs
+    try:
+        prs = github_api("GET", f"/repos/{platform_repo}/pulls?state=open&per_page=100")
+        for pr in (prs or []):
+            head_ref = pr.get("head", {}).get("ref", "")
+            if head_ref.startswith(f"feat/onboard-{connector_name}-"):
+                return {"error": f"Connector '{connector_name}' already has a pending onboarding request (PR #{pr['number']})."}
+    except Exception:
+        pass
+
+    return {
+        "handoff": "onboard_form",
+        "message": f"Switching to the secure onboarding form with pre-filled config for '{connector_name}'. Please enter the required secrets in the form — they will be encrypted client-side before submission.",
+        "connector_name": connector_name,
+        "connector_type": connector_type,
+        "config": config,
+    }
+
+
 def _onboard_connector_internal(params, email):
     """Onboard a connector with server-side age encryption. Returns a dict."""
     import pyrage
@@ -799,12 +839,12 @@ CHAT_SYSTEM_PROMPT = """You are Provision, an AI assistant for managing data con
 
 ## Behavior
 
-1. When onboarding a connector, gather all required fields through conversation before calling the tool. Ask for missing fields.
-2. Before destructive actions (remove, cancel), confirm with the user first.
-3. Present connector lists in a readable format. Statuses: "active" = merged and live, "pending" = awaiting PR review, "removing" = removal PR open.
-4. If a tool call fails, explain the error in plain language.
-5. Connector names must be lowercase letters, numbers, and hyphens only.
-6. Never invent values for secret fields — always ask the user.
+1. When onboarding a connector, gather all required config fields (NOT secrets) through conversation, then call prepare_onboard. The system will switch the user to a secure form pre-filled with the config, where they enter secrets directly. Secrets are encrypted client-side and never pass through this chat.
+2. Do NOT ask users for passwords, API keys, SSH keys, or other secret values in chat. Tell them these will be entered securely in the form.
+3. Before destructive actions (remove, cancel), confirm with the user first.
+4. Present connector lists in a readable format. Statuses: "active" = merged and live, "pending" = awaiting PR review, "removing" = removal PR open.
+5. If a tool call fails, explain the error in plain language.
+6. Connector names must be lowercase letters, numbers, and hyphens only.
 7. Keep responses concise."""
 
 CHAT_TOOLS = [
@@ -818,17 +858,16 @@ CHAT_TOOLS = [
         }
     },
     {
-        "name": "onboard_connector",
-        "description": "Onboard a new data connector by dispatching a GitHub Actions workflow that creates a PR with the connector configuration. Connector types: s3 (config: bucket_name, region), postgres (config: host, port, database; secrets: username, password), rest-api (config: base_url, polling_schedule; secrets: api_key), sftp (config: host, port; secrets: username, ssh_private_key).",
+        "name": "prepare_onboard",
+        "description": "Prepare a connector for onboarding by validating the config and switching the user to the secure onboarding form. The form will be pre-filled with the connector name, type, and config fields. The user enters secrets (passwords, API keys, SSH keys) directly in the form where they are encrypted client-side — secrets never pass through the chat. Call this once you have gathered all config fields from the user.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "connector_name": {"type": "string", "description": "Unique name. Lowercase letters, numbers, and hyphens only."},
                 "connector_type": {"type": "string", "enum": ["s3", "postgres", "rest-api", "sftp"]},
-                "config": {"type": "object", "description": "Non-secret configuration fields."},
-                "secrets": {"type": "object", "description": "Secret fields (credentials). Will be encrypted."}
+                "config": {"type": "object", "description": "Non-secret configuration fields only."}
             },
-            "required": ["connector_name", "connector_type", "config", "secrets"]
+            "required": ["connector_name", "connector_type", "config"]
         }
     },
     {
@@ -885,8 +924,8 @@ def execute_tool(tool_name, tool_input, email):
     try:
         if tool_name == "list_connectors":
             return _list_connectors_internal()
-        elif tool_name == "onboard_connector":
-            return _onboard_connector_internal(tool_input, email)
+        elif tool_name == "prepare_onboard":
+            return _prepare_onboard_internal(tool_input)
         elif tool_name == "remove_connector":
             return _remove_connector_internal(tool_input, email)
         elif tool_name == "cancel_pr":
@@ -950,8 +989,11 @@ def handle_chat(normalized):
 
         # Execute each tool and collect results
         tool_results = []
+        handoff = None
         for tool_use in tool_uses:
             result = execute_tool(tool_use["name"], tool_use["input"], email)
+            if result.get("handoff"):
+                handoff = result
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": tool_use["id"],
@@ -967,10 +1009,14 @@ def handle_chat(normalized):
             if isinstance(block, dict) and block.get("type") == "text":
                 assistant_text += block["text"]
 
-    return response_json(200, {
+    resp_body = {
         "reply": assistant_text,
         "messages": messages,
-    })
+    }
+    if handoff:
+        resp_body["handoff"] = handoff
+
+    return response_json(200, resp_body)
 
 
 def handle_run_status(normalized):

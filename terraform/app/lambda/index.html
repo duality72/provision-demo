@@ -1179,6 +1179,9 @@
                 } else {
                     appendChatBubble("assistant", data.reply);
                     chatMessages = data.messages;
+                    if (data.handoff && data.handoff.handoff === "onboard_form") {
+                        prefillOnboardForm(data.handoff);
+                    }
                 }
             } catch (e) {
                 thinkingEl.remove();
@@ -1189,6 +1192,27 @@
             document.getElementById("chat-send-btn").disabled = false;
             input.focus();
         };
+
+        function prefillOnboardForm(handoff) {
+            // Set connector type and trigger field rendering
+            const typeSelect = document.getElementById("connector_type");
+            typeSelect.value = handoff.connector_type;
+            renderDynamicFields();
+
+            // Set connector name
+            document.getElementById("connector_name").value = handoff.connector_name;
+
+            // Fill config fields
+            if (handoff.config) {
+                for (const [key, value] of Object.entries(handoff.config)) {
+                    const el = document.getElementById(`config_${key}`);
+                    if (el) el.value = String(value);
+                }
+            }
+
+            // Switch to onboard tab after a short delay so user sees the chat message
+            setTimeout(() => switchTab("onboard"), 1000);
+        }
 
         function appendChatBubble(role, text) {
             const container = document.getElementById("chat-messages");
