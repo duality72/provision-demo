@@ -397,7 +397,7 @@
             <div id="chat-section" class="hidden">
                 <div class="card chat-container">
                     <div id="chat-messages" class="chat-messages">
-                        <div class="chat-msg assistant">Hi! I can help you manage connectors. Try "list my connectors" or "onboard a new S3 connector".</div>
+                        <div class="chat-msg assistant">Hi! I can help you manage connectors. I can onboard S3, PostgreSQL, REST API, and SFTP connectors, or list, remove, and cancel existing ones. What would you like to do?</div>
                     </div>
                     <div class="chat-input-bar">
                         <input type="text" id="chat-input" placeholder="Type a message..." onkeydown="if(event.key==='Enter')sendChat()">
@@ -1475,6 +1475,9 @@
 
         function prefillOnboardForm(handoff) {
             // Reset form state so Onboard tab shows fresh form when user switches to it
+            currentRunId = null;
+            currentConnectorName = null;
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
             document.getElementById("status-section").classList.add("hidden");
             document.getElementById("result-card").classList.add("hidden");
             // Only show form-section if we're currently on the Onboard tab
