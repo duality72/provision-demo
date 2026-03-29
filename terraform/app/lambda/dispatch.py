@@ -35,6 +35,16 @@ COGNITO_REGION = os.environ.get("AWS_REGION", "us-east-1")
 APP_NAME = os.environ.get("APP_NAME", "provision-demo")
 
 CONNECTOR_TYPES = {"s3", "postgres", "rest-api", "sftp"}
+CONNECTOR_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9\-]{0,61}[a-z0-9]$")
+
+
+def validate_connector_name(name):
+    """Validate connector name format. Returns error string or None."""
+    if not name:
+        return "connector_name is required"
+    if len(name) < 2 or not CONNECTOR_NAME_RE.match(name):
+        return "Connector name must be 2-63 characters, lowercase letters, numbers, and hyphens only."
+    return None
 
 # In-memory caches (persist across warm invocations)
 _jwks_cache = None
@@ -303,8 +313,9 @@ def handle_dispatch(normalized):
     connector_type = payload.get("connector_type", "").strip()
     encrypted_payload = payload.get("encrypted_payload", "").strip()
 
-    if not connector_name:
-        return response_json(400, {"error": "connector_name is required"})
+    name_error = validate_connector_name(connector_name)
+    if name_error:
+        return response_json(400, {"error": name_error})
     if connector_type not in CONNECTOR_TYPES:
         return response_json(400, {
             "error": f"Invalid connector_type. Must be one of: {', '.join(sorted(CONNECTOR_TYPES))}"
@@ -415,8 +426,9 @@ def handle_remove(normalized):
     email = claims.get("email", "unknown")
     connector_name = payload.get("connector_name", "").strip()
 
-    if not connector_name:
-        return response_json(400, {"error": "connector_name is required"})
+    name_error = validate_connector_name(connector_name)
+    if name_error:
+        return response_json(400, {"error": name_error})
 
     # Verify connector exists on main
     platform_repo = get_ssm_param(f"/{APP_NAME}/platform-repo")

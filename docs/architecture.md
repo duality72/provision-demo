@@ -113,8 +113,8 @@ The Lambda function (`dispatch.py`) serves the following routes:
 Configuration:
 - Runtime: Python 3.12
 - Handler: `dispatch.handler`
-- Memory: 256 MB, Timeout: 30s
-- Layer: PyJWT + cryptography (built via `build-layer.sh` for Linux x86_64)
+- Memory: 256 MB, Timeout: 60s
+- Layer: PyJWT, cryptography, pyrage (built via `build-layer.sh` for Linux x86_64)
 - Invoked via Lambda Function URL
 
 All responses include CORS headers for browser compatibility. The Lambda reads configuration from SSM Parameter Store and secrets from Secrets Manager, with in-memory caching (5-minute TTL) to minimize API calls.

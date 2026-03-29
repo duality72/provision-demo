@@ -54,8 +54,9 @@ resource "aws_lambda_permission" "function_url" {
 }
 
 resource "aws_lambda_permission" "function_url_invoke" {
-  statement_id  = "FunctionURLAllowPublicInvoke"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.app.function_name
-  principal     = "*"
+  statement_id           = "FunctionURLAllowPublicInvoke"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.app.function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
 }

@@ -543,6 +543,12 @@
         };
 
         // ── State ───────────────────────────────────────
+        function decodeJwtClaims(token) {
+            const part = token.split(".")[1];
+            const padded = part.replace(/-/g, "+").replace(/_/g, "/");
+            return JSON.parse(atob(padded));
+        }
+
         let appConfig = null;
         let idToken = null;
         let currentRunId = null;
@@ -625,7 +631,7 @@
             sessionStorage.removeItem("code_verifier");
 
             // Decode and display user info
-            const claims = JSON.parse(atob(idToken.split(".")[1]));
+            const claims = decodeJwtClaims(idToken);
             document.getElementById("user-info").textContent = claims.email || "Authenticated";
 
             showFormSection();
@@ -1536,7 +1542,7 @@
             // Convert markdown links [text](url) to clickable HTML links
             const html = text
                 .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-                .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a class="link" href="$2" target="_blank">$1</a>')
+                .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a class="link" href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
                 .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
                 .replace(/\n/g, "<br>");
             div.innerHTML = html;
@@ -1642,7 +1648,7 @@
             const savedToken = sessionStorage.getItem("id_token");
             if (savedToken) {
                 try {
-                    const claims = JSON.parse(atob(savedToken.split(".")[1]));
+                    const claims = decodeJwtClaims(savedToken);
                     if (claims.exp && claims.exp * 1000 > Date.now()) {
                         idToken = savedToken;
                         document.getElementById("user-info").textContent = claims.email || "Authenticated";
