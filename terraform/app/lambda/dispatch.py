@@ -1137,6 +1137,17 @@ def handle_chat(normalized):
             if isinstance(block, dict) and block.get("type") == "text":
                 assistant_text += block["text"]
 
+    # If the loop ended with no text (e.g., after a tool call), make one more call
+    if not assistant_text.strip() and messages:
+        try:
+            response = call_claude_api(messages)
+            messages.append({"role": "assistant", "content": response["content"]})
+            for block in response["content"]:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    assistant_text += block["text"]
+        except Exception:
+            pass
+
     resp_body = {
         "reply": assistant_text,
         "messages": messages,
