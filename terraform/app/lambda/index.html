@@ -620,6 +620,7 @@
 
             const data = await resp.json();
             idToken = data.id_token;
+            sessionStorage.setItem("id_token", idToken);
             sessionStorage.removeItem("code_verifier");
 
             // Decode and display user info
@@ -1346,7 +1347,11 @@
             }
 
             // Check for existing token (page refresh)
-            if (idToken) {
+            const savedToken = sessionStorage.getItem("id_token");
+            if (savedToken) {
+                idToken = savedToken;
+                const claims = JSON.parse(atob(idToken.split(".")[1]));
+                document.getElementById("user-info").textContent = claims.email || "Authenticated";
                 showFormSection();
             }
         }
