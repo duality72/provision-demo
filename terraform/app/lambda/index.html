@@ -546,6 +546,7 @@
         let appConfig = null;
         let idToken = null;
         let currentRunId = null;
+        let currentConnectorName = null;
         let pollTimer = null;
 
         // ── PKCE helpers ────────────────────────────────
@@ -846,6 +847,7 @@
             document.getElementById("status-section").classList.remove("hidden");
 
             currentRunId = dispatchResult.run_id;
+            currentConnectorName = dispatchResult.connector_name;
             const connectorName = dispatchResult.connector_name;
 
             let html = "";
@@ -920,8 +922,9 @@
             }
             document.getElementById("result-content").innerHTML = html;
 
+            const name = currentConnectorName || "Connector";
             const details = [
-                `Connector onboarded successfully — awaiting PR approval.`,
+                `${name} onboarded successfully — awaiting PR approval.`,
                 data.pr_url ? `PR: ${data.pr_url}` : null
             ].filter(Boolean).join("\n");
             document.getElementById("access-details").value = details;
@@ -1241,6 +1244,7 @@
             // Trigger the same status view as the form's showStatusSection
             // so the user sees identical progress on the Onboard tab
             currentRunId = dispatch.run_id;
+            currentConnectorName = dispatch.connector_name;
             const connectorName = dispatch.connector_name;
 
             let html = "";
@@ -1254,7 +1258,10 @@
             document.getElementById("status-content").innerHTML = html;
             document.getElementById("result-card").classList.add("hidden");
 
-            // Start polling (same as form flow)
+            // Show progress in chat
+            const progressBubble = appendChatBubble("thinking", `Submitting ${connectorName}...`);
+
+            // Start polling (same as form flow, plus chat result)
             if (pollTimer) clearInterval(pollTimer);
             let attempts = 0;
             const maxAttempts = 36;
@@ -1264,6 +1271,8 @@
                     clearInterval(pollTimer);
                     const badge = document.getElementById("run-status-badge");
                     if (badge) { badge.className = "status-badge failure"; badge.textContent = "Timed Out"; }
+                    progressBubble.textContent = `${connectorName} submission timed out.`;
+                    progressBubble.className = "chat-msg assistant";
                     return;
                 }
                 try {
@@ -1271,10 +1280,40 @@
                     const resp = await fetch(`/run-status?${params}`);
                     const data = await resp.json();
                     updateRunStatus(data);
+
+                    if (data.status === "completed") {
+                        clearInterval(pollTimer);
+                        progressBubble.remove();
+                        if (data.conclusion === "success") {
+                            showChatResult(connectorName, data);
+                        } else {
+                            appendChatBubble("assistant", `Onboarding failed for ${connectorName}. Check the workflow run for details.`);
+                        }
+                    }
                 } catch (e) {
                     console.error("Poll error:", e);
                 }
             }, 5000);
+        }
+
+        function showChatResult(connectorName, data) {
+            const container = document.getElementById("chat-messages");
+            const div = document.createElement("div");
+            div.className = "chat-msg assistant";
+
+            const detailId = `chat-result-${Date.now()}`;
+            const details = [
+                `${connectorName} onboarded successfully — awaiting PR approval.`,
+                data.pr_url ? `PR: ${data.pr_url}` : null
+            ].filter(Boolean).join("\n");
+
+            div.innerHTML = `<div style="margin-bottom:0.5rem"><strong>${connectorName}</strong> onboarded successfully — awaiting PR approval.</div>`
+                + (data.pr_url ? `<div style="margin-bottom:0.5rem"><a class="link" href="${data.pr_url}" target="_blank">PR #${data.pr_number}</a></div>` : "")
+                + `<textarea id="${detailId}" rows="2" readonly style="font-size:0.75rem;width:100%;margin-bottom:0.375rem;border:1px solid #cbd5e1;border-radius:0.375rem;padding:0.375rem">${details}</textarea>`
+                + `<button class="btn-secondary" style="padding:0.2rem 0.625rem;font-size:0.7rem" onclick="copyField('${detailId}', this)">Copy to Clipboard</button>`;
+
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
         }
 
         function prefillOnboardForm(handoff) {
