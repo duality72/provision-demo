@@ -1317,10 +1317,13 @@
         }
 
         function prefillOnboardForm(handoff) {
-            // Reset form view if status section is showing (previous submission)
+            // Reset form state so Onboard tab shows fresh form when user switches to it
             document.getElementById("status-section").classList.add("hidden");
             document.getElementById("result-card").classList.add("hidden");
-            document.getElementById("form-section").classList.remove("hidden");
+            // Only show form-section if we're currently on the Onboard tab
+            if (document.getElementById("tab-onboard").classList.contains("active")) {
+                document.getElementById("form-section").classList.remove("hidden");
+            }
 
             // Set connector type and trigger field rendering (if provided)
             if (handoff.connector_type) {
