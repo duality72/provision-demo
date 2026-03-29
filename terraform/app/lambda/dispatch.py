@@ -629,6 +629,17 @@ def _list_connectors_internal():
     return {"connectors": connectors}
 
 
+def _update_form_internal(params):
+    """Update the onboard form with fields collected so far. Returns a handoff."""
+    return {
+        "handoff": "onboard_form",
+        "message": "Form updated.",
+        "connector_name": params.get("connector_name", ""),
+        "connector_type": params.get("connector_type", ""),
+        "config": params.get("config", {}),
+    }
+
+
 def _prepare_onboard_internal(params):
     """Validate config for onboarding and return handoff data."""
     connector_name = params.get("connector_name", "").strip()
@@ -839,13 +850,15 @@ CHAT_SYSTEM_PROMPT = """You are Provision, an AI assistant for managing data con
 
 ## Behavior
 
-1. When onboarding a connector, first gather the config fields and call prepare_onboard. This validates the connector and pre-fills the onboarding form in the background.
-2. After preparing, ask the user for the required secrets (if any for the connector type). Offer two options:
+1. When onboarding a connector, ask for one field at a time. After each answer, call update_form with all fields known so far. This pre-fills the Onboard form in real-time so the user can switch to it at any point.
+2. Ask in this order: connector type, connector name, then each config field for that type, then secrets.
+3. For secrets, offer two options:
    - Provide them here in the chat (they will pass through the AI service but are encrypted before storage)
-   - Switch to the Onboard tab where the form is pre-filled and enter secrets there with client-side encryption (more secure)
-3. If the user provides secrets in chat, call onboard_connector to complete the onboarding.
-4. If the connector type has no secrets (e.g., S3), call onboard_connector directly after prepare_onboard.
-5. Before destructive actions (remove, cancel), confirm with the user first.
+   - Switch to the Onboard tab where the form is already pre-filled with config — enter secrets there for client-side encryption (more secure)
+4. If the user provides secrets in chat, call onboard_connector to complete the onboarding.
+5. If the connector type has no secrets (e.g., S3), call onboard_connector directly once all config is gathered.
+6. Before destructive actions (remove, cancel), confirm with the user first.
+7. If the user provides multiple fields at once, that's fine — call update_form with all of them.
 4. Present connector lists in a readable format. Statuses: "active" = merged and live, "pending" = awaiting PR review, "removing" = removal PR open.
 5. If a tool call fails, explain the error in plain language.
 6. Connector names must be lowercase letters, numbers, and hyphens only.
@@ -862,16 +875,16 @@ CHAT_TOOLS = [
         }
     },
     {
-        "name": "prepare_onboard",
-        "description": "Prepare a connector for onboarding by validating the config and switching the user to the secure onboarding form. The form will be pre-filled with the connector name, type, and config fields. The user enters secrets (passwords, API keys, SSH keys) directly in the form where they are encrypted client-side — secrets never pass through the chat. Call this once you have gathered all config fields from the user.",
+        "name": "update_form",
+        "description": "Update the Onboard form with field values collected so far. Call this every time you learn new field values from the user — the form updates in real-time so the user can switch to the Onboard tab at any point. Include all known fields each time (not just new ones).",
         "input_schema": {
             "type": "object",
             "properties": {
-                "connector_name": {"type": "string", "description": "Unique name. Lowercase letters, numbers, and hyphens only."},
-                "connector_type": {"type": "string", "enum": ["s3", "postgres", "rest-api", "sftp"]},
-                "config": {"type": "object", "description": "Non-secret configuration fields only."}
+                "connector_name": {"type": "string", "description": "Connector name if known."},
+                "connector_type": {"type": "string", "enum": ["s3", "postgres", "rest-api", "sftp"], "description": "Connector type if known."},
+                "config": {"type": "object", "description": "Config fields known so far."}
             },
-            "required": ["connector_name", "connector_type", "config"]
+            "required": []
         }
     },
     {
@@ -942,8 +955,8 @@ def execute_tool(tool_name, tool_input, email):
     try:
         if tool_name == "list_connectors":
             return _list_connectors_internal()
-        elif tool_name == "prepare_onboard":
-            return _prepare_onboard_internal(tool_input)
+        elif tool_name == "update_form":
+            return _update_form_internal(tool_input)
         elif tool_name == "onboard_connector":
             return _onboard_connector_internal(tool_input, email)
         elif tool_name == "remove_connector":

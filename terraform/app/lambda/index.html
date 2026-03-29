@@ -1223,22 +1223,28 @@
         };
 
         function prefillOnboardForm(handoff) {
-            // Set connector type and trigger field rendering
-            const typeSelect = document.getElementById("connector_type");
-            typeSelect.value = handoff.connector_type;
-            renderDynamicFields();
+            // Set connector type and trigger field rendering (if provided)
+            if (handoff.connector_type) {
+                const typeSelect = document.getElementById("connector_type");
+                if (typeSelect.value !== handoff.connector_type) {
+                    typeSelect.value = handoff.connector_type;
+                    renderDynamicFields();
+                }
+            }
 
-            // Set connector name
-            document.getElementById("connector_name").value = handoff.connector_name;
+            // Set connector name (if provided)
+            if (handoff.connector_name) {
+                document.getElementById("connector_name").value = handoff.connector_name;
+            }
 
-            // Fill config fields
+            // Fill config fields (if provided)
             if (handoff.config) {
                 for (const [key, value] of Object.entries(handoff.config)) {
                     const el = document.getElementById(`config_${key}`);
                     if (el) el.value = String(value);
                 }
             }
-            // Form is pre-filled silently — user can switch to Onboard tab at any time
+            // Form updates silently — user can switch to Onboard tab at any time
         }
 
         function appendChatBubble(role, text) {
