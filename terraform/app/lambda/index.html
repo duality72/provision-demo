@@ -1175,15 +1175,11 @@
 
         // ── Chat ─────────────────────────────────────────
         let chatMessages = [];
-        let lastInputWasVoice = false;
 
         window.sendChat = async function () {
             const input = document.getElementById("chat-input");
             const text = input.value.trim();
             if (!text) return;
-
-            const wasVoice = lastInputWasVoice;
-            lastInputWasVoice = false;
 
             input.value = "";
             input.disabled = true;
@@ -1211,7 +1207,6 @@
                 } else {
                     appendChatBubble("assistant", data.reply);
                     chatMessages = data.messages;
-                    if (wasVoice && data.reply) speakText(data.reply);
                     if (data.handoff && data.handoff.handoff === "onboard_form") {
                         prefillOnboardForm(data.handoff);
                     }
@@ -1286,7 +1281,6 @@
                 // Auto-send if we got a final result
                 const input = document.getElementById("chat-input");
                 if (input.value.trim()) {
-                    lastInputWasVoice = true;
                     sendChat();
                 }
             };
@@ -1319,18 +1313,6 @@
 
         // Initialize speech recognition on load
         initSpeechRecognition();
-
-        // Read agent responses aloud
-        function speakText(text) {
-            if (!window.speechSynthesis) return;
-            // Strip markdown formatting for cleaner speech
-            const clean = text.replace(/[*#`\[\]()]/g, "").replace(/\n+/g, ". ").trim();
-            if (!clean) return;
-            const utterance = new SpeechSynthesisUtterance(clean);
-            utterance.rate = 1.1;
-            utterance.pitch = 1;
-            speechSynthesis.speak(utterance);
-        }
 
         // ── UI helpers ──────────────────────────────────
         function showFormSection() {
