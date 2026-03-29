@@ -1212,8 +1212,13 @@
                         appendChatBubble("assistant", "Done. What's next?");
                     }
                     chatMessages = data.messages;
-                    if (data.handoff && data.handoff.handoff === "onboard_form") {
-                        prefillOnboardForm(data.handoff);
+                    if (data.handoff) {
+                        if (data.handoff.handoff === "onboard_form") {
+                            prefillOnboardForm(data.handoff);
+                        }
+                        if (data.handoff.dispatch) {
+                            handleChatDispatch(data.handoff.dispatch);
+                        }
                     }
                 }
             } catch (e) {
@@ -1225,6 +1230,46 @@
             document.getElementById("chat-send-btn").disabled = false;
             input.focus();
         };
+
+        function handleChatDispatch(dispatch) {
+            // Trigger the same status view as the form's showStatusSection
+            // so the user sees identical progress on the Onboard tab
+            currentRunId = dispatch.run_id;
+            const connectorName = dispatch.connector_name;
+
+            let html = "";
+            if (dispatch.run_url) {
+                html += `<div class="result-row"><span class="result-label">Workflow Run</span><a class="link" href="${dispatch.run_url}" target="_blank">View on GitHub</a></div>`;
+            }
+            html += `<div class="result-row"><span class="result-label">Connector</span><span class="result-value">${dispatch.connector_name}</span></div>`;
+            html += `<div class="result-row"><span class="result-label">Type</span><span class="result-value">${dispatch.connector_type}</span></div>`;
+            html += `<div class="result-row"><span class="result-label">Status</span><span class="status-badge running" id="run-status-badge"><span class="spinner"></span> In Progress</span></div>`;
+
+            document.getElementById("status-content").innerHTML = html;
+            document.getElementById("result-card").classList.add("hidden");
+
+            // Start polling (same as form flow)
+            if (pollTimer) clearInterval(pollTimer);
+            let attempts = 0;
+            const maxAttempts = 36;
+            pollTimer = setInterval(async () => {
+                attempts++;
+                if (attempts > maxAttempts) {
+                    clearInterval(pollTimer);
+                    const badge = document.getElementById("run-status-badge");
+                    if (badge) { badge.className = "status-badge failure"; badge.textContent = "Timed Out"; }
+                    return;
+                }
+                try {
+                    const params = new URLSearchParams({ run_id: currentRunId, connector_name: connectorName });
+                    const resp = await fetch(`/run-status?${params}`);
+                    const data = await resp.json();
+                    updateRunStatus(data);
+                } catch (e) {
+                    console.error("Poll error:", e);
+                }
+            }, 5000);
+        }
 
         function prefillOnboardForm(handoff) {
             // Set connector type and trigger field rendering (if provided)

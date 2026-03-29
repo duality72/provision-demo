@@ -714,6 +714,39 @@ def _onboard_connector_internal(params, email):
     except Exception:
         pass
 
+    # Validate config fields
+    AWS_REGIONS = {
+        "us-east-1", "us-east-2", "us-west-1", "us-west-2",
+        "af-south-1", "ap-east-1", "ap-south-1", "ap-south-2",
+        "ap-southeast-1", "ap-southeast-2", "ap-southeast-3", "ap-southeast-4",
+        "ap-northeast-1", "ap-northeast-2", "ap-northeast-3",
+        "ca-central-1", "ca-west-1",
+        "eu-central-1", "eu-central-2", "eu-west-1", "eu-west-2", "eu-west-3",
+        "eu-north-1", "eu-south-1", "eu-south-2",
+        "il-central-1", "me-central-1", "me-south-1", "sa-east-1",
+    }
+    FIELD_RULES = {
+        "bucket_name": (lambda v: bool(re.match(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$", v)),
+                        "Bucket name must be 3-63 characters, lowercase letters, numbers, hyphens, and periods."),
+        "region": (lambda v: v in AWS_REGIONS,
+                   f"Invalid AWS region. Must be one of: {', '.join(sorted(list(AWS_REGIONS)[:5]))}..."),
+        "host": (lambda v: bool(re.match(r"^[a-zA-Z0-9]([a-zA-Z0-9\-\.]*[a-zA-Z0-9])?$", v)),
+                 "Host must be a valid hostname or IP address."),
+        "port": (lambda v: v.isdigit() and 1 <= int(v) <= 65535,
+                 "Port must be a number between 1 and 65535."),
+        "database": (lambda v: bool(re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", v)),
+                     "Database name must start with a letter or underscore."),
+        "base_url": (lambda v: v.startswith("http://") or v.startswith("https://"),
+                     "Base URL must start with http:// or https://."),
+        "polling_schedule": (lambda v: bool(re.match(r"^[*0-9,\-/]+\s+[*0-9,\-/]+\s+[*0-9,\-/]+\s+[*0-9,\-/]+\s+[*0-9,\-/]+$", v.strip())),
+                             "Polling schedule must be a valid cron expression."),
+    }
+    for field, value in config.items():
+        if field in FIELD_RULES:
+            validator, message = FIELD_RULES[field]
+            if not validator(str(value)):
+                return {"error": f"Invalid {field}: {message}"}
+
     # Build and encrypt payload
     payload_obj = {
         "connector_name": connector_name,
@@ -749,10 +782,25 @@ def _onboard_connector_internal(params, email):
         error_body = e.read().decode() if e.fp else str(e)
         return {"error": f"GitHub API error: {e.code} {error_body}"}
 
+    # Poll for run ID
+    time.sleep(2)
+    run_id = None
+    try:
+        runs = github_api(
+            "GET",
+            f"/repos/{platform_repo}/actions/workflows/onboard-connector.yml/runs?per_page=1",
+        )
+        if runs and runs.get("workflow_runs"):
+            run_id = runs["workflow_runs"][0]["id"]
+    except Exception:
+        pass
+
     return {
         "message": f"Onboarding workflow dispatched for connector '{connector_name}'. A PR will be created shortly.",
         "connector_name": connector_name,
         "connector_type": connector_type,
+        "run_id": run_id,
+        "run_url": f"https://github.com/{platform_repo}/actions/runs/{run_id}" if run_id else None,
     }
 
 
@@ -850,15 +898,17 @@ CHAT_SYSTEM_PROMPT = """You are Provision, an AI assistant for managing data con
 
 ## Behavior
 
-1. When onboarding a connector, ask for one field at a time. After each answer, call update_form with all fields known so far. This pre-fills the Onboard form in real-time so the user can switch to it at any point.
-2. Ask in this order: connector type, connector name, then each config field for that type, then secrets.
-3. For secrets, offer two options:
-   - Provide them here in the chat (they will pass through the AI service but are encrypted before storage)
-   - Switch to the Onboard tab where the form is already pre-filled with config — enter secrets there for client-side encryption (more secure)
-4. If the user provides secrets in chat, call onboard_connector to complete the onboarding.
-5. If the connector type has no secrets (e.g., S3), call onboard_connector directly once all config is gathered.
-6. Before destructive actions (remove, cancel), confirm with the user first.
-7. If the user provides multiple fields at once, that's fine — call update_form with all of them.
+1. When onboarding a connector, ask for one field at a time. After each answer, call update_form with all fields known so far. This pre-fills the Onboard tab form in real-time so the user can switch to it at any point.
+2. Ask in this order: connector type, connector name, then each config field for that type one by one.
+3. Validate values as you go — for example, region must be a valid AWS region (us-east-1, us-west-2, etc.), port must be 1-65535, URLs must start with http/https. If a value is invalid, explain why and ask again.
+4. Once all config fields are gathered, show a summary and ask the user to confirm before submitting. Mention they can also check or edit the pre-filled form on the Onboard tab.
+5. For connector types with secrets: after config confirmation, offer two options:
+   - Provide secrets here in the chat (they pass through the AI service but are encrypted before storage)
+   - Switch to the Onboard tab where the form is pre-filled — enter secrets there for client-side encryption (more secure)
+6. If the user provides secrets in chat, call onboard_connector to complete the onboarding.
+7. If the connector type has no secrets (e.g., S3), call onboard_connector after user confirms the config summary.
+8. Before destructive actions (remove, cancel), confirm with the user first.
+9. If the user provides multiple fields at once, that's fine — call update_form with all of them.
 4. Present connector lists in a readable format. Statuses: "active" = merged and live, "pending" = awaiting PR review, "removing" = removal PR open.
 5. If a tool call fails, explain the error in plain language.
 6. Connector names must be lowercase letters, numbers, and hyphens only.
@@ -889,7 +939,7 @@ CHAT_TOOLS = [
     },
     {
         "name": "onboard_connector",
-        "description": "Complete the onboarding of a connector that was already validated with prepare_onboard. Call this when the user provides secrets in chat, or immediately for connector types with no secrets (like S3). Always call prepare_onboard first.",
+        "description": "Complete the onboarding of a connector after the user confirms. Returns a run_id and run_url for tracking progress. For types with no secrets (S3), pass an empty secrets object. The system validates all fields server-side and returns errors for invalid values.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -1027,6 +1077,14 @@ def handle_chat(normalized):
             result = execute_tool(tool_use["name"], tool_use["input"], email)
             if result.get("handoff"):
                 handoff = result
+            if result.get("run_id"):
+                handoff = handoff or {}
+                handoff["dispatch"] = {
+                    "run_id": result["run_id"],
+                    "run_url": result.get("run_url"),
+                    "connector_name": result.get("connector_name"),
+                    "connector_type": result.get("connector_type"),
+                }
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": tool_use["id"],
