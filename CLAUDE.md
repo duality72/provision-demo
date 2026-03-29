@@ -20,6 +20,14 @@ Never run `terraform apply` locally — the Lambda needs SSM params and Secrets 
 
 For larger features, create a PR with `feat/` prefix so CI runs `terraform plan` first.
 
+### Monitor PRs for status checks and Copilot
+
+When creating PRs, always:
+1. Wait for CI status checks to pass: `gh pr checks <number> --watch`
+2. Check for Copilot code review comments: `gh api repos/duality72/provision-demo/pulls/<number>/comments --jq '.[] | "[\(.user.login)] \(.path):\(.line) — \(.body[0:200])"'`
+3. Address any Copilot findings before merging
+4. Copilot is configured as an automatic reviewer on PRs to main
+
 ### E2E test every change
 
 After every deploy, run a Playwright E2E test against the live app:

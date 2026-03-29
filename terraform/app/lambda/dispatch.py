@@ -519,10 +519,11 @@ def handle_cancel_pr(normalized):
 
     token = auth_header[7:]
     try:
-        validate_cognito_token(token)
+        claims = validate_cognito_token(token)
     except Exception as e:
         return response_json(401, {"error": f"Token validation failed: {str(e)}"})
 
+    email = claims.get("email", "unknown")
     pr_number = payload.get("pr_number")
     if not pr_number:
         return response_json(400, {"error": "pr_number is required"})
@@ -537,6 +538,16 @@ def handle_cancel_pr(normalized):
         # Only allow cancelling onboard/remove PRs
         if not head_ref.startswith("feat/onboard-") and not head_ref.startswith("feat/remove-"):
             return response_json(403, {"error": "Cannot cancel this PR"})
+
+        # Verify the caller is the one who requested this connector
+        pr_body = pr.get("body", "") or ""
+        requested_by = None
+        for line in pr_body.split("\n"):
+            if "**Requested by:**" in line:
+                requested_by = line.split("**Requested by:**")[-1].strip()
+                break
+        if not requested_by or requested_by != email:
+            return response_json(403, {"error": "You can only cancel your own connector requests."})
 
         # Close the PR
         github_api("PATCH", f"/repos/{platform_repo}/pulls/{pr_number}", {"state": "closed"})
@@ -556,6 +567,20 @@ def handle_cancel_pr(normalized):
 
 def handle_connectors(normalized):
     """List existing connectors (on main) and pending connector PRs."""
+    # Require authentication to prevent unauthenticated API rate limit abuse
+    headers = normalized["headers"]
+    auth_header = None
+    for key, value in headers.items():
+        if key.lower() == "authorization":
+            auth_header = value
+            break
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return response_json(401, {"error": "Authentication required"})
+    try:
+        validate_cognito_token(auth_header[7:])
+    except Exception:
+        return response_json(401, {"error": "Invalid or expired token"})
+
     return response_json(200, _list_connectors_internal())
 
 

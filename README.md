@@ -131,7 +131,7 @@ provision-demo/
 | POST | `/remove` | JWT | Dispatches connector removal workflow |
 | POST | `/cancel-pr` | JWT | Closes a pending onboard/removal PR and deletes its branch |
 | POST | `/chat` | JWT | AI chat with Claude tool-use loop for natural language connector management |
-| GET | `/connectors` | No | Lists active, pending, and removing connectors |
+| GET | `/connectors` | JWT | Lists active, pending, and removing connectors |
 | GET | `/run-status` | No | Checks workflow run status and finds resulting PR |
 
 ## How It Works
