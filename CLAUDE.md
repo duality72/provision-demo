@@ -123,7 +123,7 @@ All actions should use Node.js 24 compatible versions:
 - **Lambda layer**: Must be built for Linux x86_64 (`--platform manylinux2014_x86_64` in build-layer.sh), not macOS
 - **Lambda layer packages**: PyJWT, cryptography, and pyrage (for server-side age encryption)
 - **Lambda timeout**: 60s to accommodate multi-round Claude tool-use loops
-- **Function URL permissions**: Needs both `lambda:InvokeFunctionUrl` AND `lambda:InvokeFunction`
+- **Function URL permissions**: Needs `lambda:InvokeFunction` with `principal = "*"`. Do NOT change this to `lambda:InvokeFunctionUrl` — AWS requires the broader permission for Function URLs to work (verified by outage)
 - **SSM DescribeParameters**: Needs account-level resource ARN, not parameter-level
 - **Cognito IAM**: Needs `Resource: "*"` for cognito-idp actions
 - **age-encryption CDN**: Use esm.sh, not jsDelivr (bare specifier imports don't work in browsers)
