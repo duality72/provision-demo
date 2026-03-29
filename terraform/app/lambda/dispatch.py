@@ -990,6 +990,7 @@ def handle_chat(normalized):
 
     # Tool-use agentic loop
     MAX_TOOL_ROUNDS = 5
+    handoff = None
     for _ in range(MAX_TOOL_ROUNDS):
         try:
             response = call_claude_api(messages)
@@ -1009,7 +1010,6 @@ def handle_chat(normalized):
 
         # Execute each tool and collect results
         tool_results = []
-        handoff = None
         for tool_use in tool_uses:
             result = execute_tool(tool_use["name"], tool_use["input"], email)
             if result.get("handoff"):
