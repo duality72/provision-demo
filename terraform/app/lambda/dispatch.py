@@ -633,7 +633,7 @@ def _update_form_internal(params):
     """Update the onboard form with fields collected so far. Returns a handoff."""
     return {
         "handoff": "onboard_form",
-        "message": "Form updated.",
+        "message": "Form updated on the Onboard tab. Continue asking for the next field.",
         "connector_name": params.get("connector_name", ""),
         "connector_type": params.get("connector_type", ""),
         "config": params.get("config", {}),
@@ -926,7 +926,7 @@ CHAT_TOOLS = [
     },
     {
         "name": "update_form",
-        "description": "Update the Onboard form with field values collected so far. Call this every time you learn new field values from the user — the form updates in real-time so the user can switch to the Onboard tab at any point. Include all known fields each time (not just new ones).",
+        "description": "Update the Onboard form with field values collected so far. Call this every time you learn new field values from the user — the form updates in real-time so the user can switch to the Onboard tab at any point. Include all known fields each time (not just new ones). After calling this, always ask the user for the next required field.",
         "input_schema": {
             "type": "object",
             "properties": {
