@@ -1013,13 +1013,26 @@ CHAT_TOOLS = [
 ]
 
 
-def call_claude_api(messages):
+def call_claude_api(messages, form_state=None):
     """Call Claude API with tool use via raw HTTP."""
     api_key = get_secret(f"{APP_NAME}/anthropic-api-key")
+    system = CHAT_SYSTEM_PROMPT
+    if form_state:
+        form_context = "\n\n## Current Onboard Form State\nThe user may have edited these values directly on the Onboard tab form:\n"
+        if form_state.get("connector_type"):
+            form_context += f"- Connector Type: {form_state['connector_type']}\n"
+        if form_state.get("connector_name"):
+            form_context += f"- Connector Name: {form_state['connector_name']}\n"
+        if form_state.get("config"):
+            for k, v in form_state["config"].items():
+                if v:
+                    form_context += f"- {k}: {v}\n"
+        form_context += "\nUse these values as the current state. If the user changed the connector type or fields on the form, acknowledge the changes and continue from the updated state."
+        system = system + form_context
     payload = {
         "model": "claude-sonnet-4-20250514",
         "max_tokens": 1024,
-        "system": CHAT_SYSTEM_PROMPT,
+        "system": system,
         "tools": CHAT_TOOLS,
         "messages": messages,
     }
@@ -1084,6 +1097,7 @@ def handle_chat(normalized):
 
     email = claims.get("email", "unknown")
     messages = payload.get("messages", [])
+    form_state = payload.get("form_state")
 
     if not messages:
         return response_json(400, {"error": "messages array is required"})
@@ -1093,7 +1107,7 @@ def handle_chat(normalized):
     handoff = None
     for _ in range(MAX_TOOL_ROUNDS):
         try:
-            response = call_claude_api(messages)
+            response = call_claude_api(messages, form_state)
         except urllib.error.HTTPError as e:
             error_body = e.read().decode() if e.fp else str(e)
             return response_json(502, {"error": f"Claude API error: {e.code} {error_body}"})
@@ -1140,7 +1154,7 @@ def handle_chat(normalized):
     # If the loop ended with no text (e.g., after a tool call), make one more call
     if not assistant_text.strip() and messages:
         try:
-            response = call_claude_api(messages)
+            response = call_claude_api(messages, form_state)
             messages.append({"role": "assistant", "content": response["content"]})
             for block in response["content"]:
                 if isinstance(block, dict) and block.get("type") == "text":

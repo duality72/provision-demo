@@ -1201,7 +1201,7 @@
                         "Content-Type": "application/json",
                         "Authorization": `Bearer ${idToken}`
                     },
-                    body: JSON.stringify({ messages: chatMessages })
+                    body: JSON.stringify({ messages: chatMessages, form_state: getFormState() })
                 });
                 const data = await resp.json();
                 thinkingEl.remove();
@@ -1472,6 +1472,22 @@
 
             container.appendChild(div);
             container.scrollTop = container.scrollHeight;
+        }
+
+        function getFormState() {
+            const type = document.getElementById("connector_type").value;
+            const name = document.getElementById("connector_name").value.trim();
+            if (!type && !name) return null;
+
+            const reg = CONNECTOR_REGISTRY[type];
+            const config = {};
+            if (reg) {
+                for (const field of reg.config_fields) {
+                    const el = document.getElementById(`config_${field}`);
+                    if (el && el.value) config[field] = el.value.trim();
+                }
+            }
+            return { connector_type: type || null, connector_name: name || null, config };
         }
 
         function prefillOnboardForm(handoff) {
