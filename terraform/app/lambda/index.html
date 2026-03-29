@@ -1204,7 +1204,13 @@
                 thinkingEl.remove();
 
                 if (!resp.ok) {
-                    appendChatBubble("assistant", `Error: ${data.error || "Something went wrong."}`);
+                    if (resp.status === 401) {
+                        sessionStorage.removeItem("id_token");
+                        idToken = null;
+                        appendChatBubble("assistant", "Your session has expired. Please reload the page to sign in again.");
+                    } else {
+                        appendChatBubble("assistant", `Error: ${data.error || "Something went wrong."}`);
+                    }
                 } else {
                     if (data.reply) {
                         appendChatBubble("assistant", data.reply);
@@ -1402,10 +1408,18 @@
             // Check for existing token (page refresh)
             const savedToken = sessionStorage.getItem("id_token");
             if (savedToken) {
-                idToken = savedToken;
-                const claims = JSON.parse(atob(idToken.split(".")[1]));
-                document.getElementById("user-info").textContent = claims.email || "Authenticated";
-                showFormSection();
+                try {
+                    const claims = JSON.parse(atob(savedToken.split(".")[1]));
+                    if (claims.exp && claims.exp * 1000 > Date.now()) {
+                        idToken = savedToken;
+                        document.getElementById("user-info").textContent = claims.email || "Authenticated";
+                        showFormSection();
+                    } else {
+                        sessionStorage.removeItem("id_token");
+                    }
+                } catch (e) {
+                    sessionStorage.removeItem("id_token");
+                }
             }
         }
 
