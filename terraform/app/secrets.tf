@@ -17,3 +17,13 @@ resource "aws_secretsmanager_secret_version" "age_secret_key" {
   secret_id     = aws_secretsmanager_secret.age_secret_key.id
   secret_string = var.age_secret_key
 }
+
+resource "aws_secretsmanager_secret" "anthropic_api_key" {
+  name        = "${var.app_name}/anthropic-api-key"
+  description = "Anthropic API key for Claude chat feature"
+}
+
+resource "aws_secretsmanager_secret_version" "anthropic_api_key" {
+  secret_id     = aws_secretsmanager_secret.anthropic_api_key.id
+  secret_string = var.anthropic_api_key
+}

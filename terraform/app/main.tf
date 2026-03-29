@@ -9,7 +9,7 @@ resource "aws_lambda_function" "app" {
   role             = aws_iam_role.lambda.arn
   handler          = "dispatch.handler"
   runtime          = "python3.12"
-  timeout          = 30
+  timeout          = 60
   memory_size      = 256
   filename         = data.archive_file.lambda.output_path
   source_code_hash = data.archive_file.lambda.output_base64sha256

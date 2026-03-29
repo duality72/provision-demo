@@ -6,11 +6,14 @@ Routes:
   GET  /config     -> Return app configuration (age public key, Cognito settings)
   POST /dispatch   -> Validate JWT, dispatch GitHub Actions workflow
   POST /remove     -> Validate JWT, dispatch connector removal workflow
+  POST /cancel-pr  -> Validate JWT, close a pending PR and delete its branch
+  POST /chat       -> Validate JWT, AI chat with Claude tool use
   GET  /connectors -> List active and pending connectors
   GET  /run-status -> Check workflow run status and find resulting PR
 """
 
 import datetime
+import re
 
 import json
 import os
@@ -541,21 +544,33 @@ def handle_cancel_pr(normalized):
 
 def handle_connectors(normalized):
     """List existing connectors (on main) and pending connector PRs."""
-    platform_repo = get_ssm_param(f"/{APP_NAME}/platform-repo")
+    return response_json(200, _list_connectors_internal())
 
+
+def _extract_connector_name(branch_ref, prefix):
+    """Extract connector name from branch ref, stripping prefix and timestamp suffix."""
+    remainder = branch_ref[len(prefix):]
+    match = re.match(r"^(.+)-\d{8}-\d{6}$", remainder)
+    if match:
+        return match.group(1)
+    return remainder
+
+
+# ---------------------------------------------------------------------------
+# Internal functions (shared by HTTP handlers and chat tools)
+# ---------------------------------------------------------------------------
+
+def _list_connectors_internal():
+    """List connectors — returns a dict (not an HTTP response)."""
+    platform_repo = get_ssm_param(f"/{APP_NAME}/platform-repo")
     connectors = []
 
-    # Existing connectors: list directories under connectors/ on main
     try:
-        contents = github_api(
-            "GET",
-            f"/repos/{platform_repo}/contents/connectors?ref=main",
-        )
+        contents = github_api("GET", f"/repos/{platform_repo}/contents/connectors?ref=main")
         if isinstance(contents, list):
             for item in contents:
                 if item.get("type") == "dir":
                     name = item["name"]
-                    # Try to read config.json for connector type
                     connector_type = None
                     try:
                         config_resp = github_api(
@@ -567,33 +582,22 @@ def handle_connectors(normalized):
                             connector_type = config_data.get("connector_type")
                     except Exception:
                         pass
-                    connectors.append({
-                        "name": name,
-                        "connector_type": connector_type,
-                        "status": "active",
-                    })
+                    connectors.append({"name": name, "connector_type": connector_type, "status": "active"})
     except urllib.error.HTTPError as e:
         if e.code != 404:
             raise
 
     active_names = {c["name"] for c in connectors}
 
-    # Pending connectors: open PRs with feat/onboard- or feat/remove- branch prefix
     try:
-        prs = github_api(
-            "GET",
-            f"/repos/{platform_repo}/pulls?state=open&per_page=100",
-        )
+        prs = github_api("GET", f"/repos/{platform_repo}/pulls?state=open&per_page=100")
         if prs:
             for pr in prs:
                 head_ref = pr.get("head", {}).get("ref", "")
                 body = pr.get("body", "") or ""
 
-                # Determine if this is an onboard or remove PR
                 if head_ref.startswith("feat/onboard-"):
-                    # Strip prefix and timestamp suffix to get connector name
                     name = _extract_connector_name(head_ref, "feat/onboard-")
-                    # Skip if connector already active
                     if name in active_names:
                         continue
                     status = "pending"
@@ -622,19 +626,351 @@ def handle_connectors(normalized):
     except Exception:
         pass
 
-    return response_json(200, {"connectors": connectors})
+    return {"connectors": connectors}
 
 
-def _extract_connector_name(branch_ref, prefix):
-    """Extract connector name from branch ref, stripping prefix and timestamp suffix."""
-    remainder = branch_ref[len(prefix):]
-    # Branch format: {name}-{YYYYMMDD-HHMMSS}
-    # Find the timestamp suffix (last 15 chars: YYYYMMDD-HHMMSS)
-    import re
-    match = re.match(r"^(.+)-\d{8}-\d{6}$", remainder)
-    if match:
-        return match.group(1)
-    return remainder
+def _onboard_connector_internal(params, email):
+    """Onboard a connector with server-side age encryption. Returns a dict."""
+    import pyrage
+
+    connector_name = params.get("connector_name", "").strip()
+    connector_type = params.get("connector_type", "").strip()
+    config = params.get("config", {})
+    secrets = params.get("secrets", {})
+
+    if not connector_name:
+        return {"error": "connector_name is required"}
+    if connector_type not in CONNECTOR_TYPES:
+        return {"error": f"Invalid connector_type. Must be one of: {', '.join(sorted(CONNECTOR_TYPES))}"}
+
+    platform_repo = get_ssm_param(f"/{APP_NAME}/platform-repo")
+
+    # Check if connector already exists on main
+    try:
+        github_api("GET", f"/repos/{platform_repo}/contents/connectors/{connector_name}?ref=main")
+        return {"error": f"Connector '{connector_name}' already exists. Remove it first before re-adding."}
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            return {"error": f"GitHub API error: {e.code}"}
+
+    # Check for open onboard PRs
+    try:
+        prs = github_api("GET", f"/repos/{platform_repo}/pulls?state=open&per_page=100")
+        for pr in (prs or []):
+            head_ref = pr.get("head", {}).get("ref", "")
+            if head_ref.startswith(f"feat/onboard-{connector_name}-"):
+                return {"error": f"Connector '{connector_name}' already has a pending onboarding request (PR #{pr['number']})."}
+    except Exception:
+        pass
+
+    # Build and encrypt payload
+    payload_obj = {
+        "connector_name": connector_name,
+        "connector_type": connector_type,
+        "config": config,
+        "secrets": secrets,
+    }
+    age_pub_key = get_ssm_param(f"/{APP_NAME}/age-public-key")
+    recipient = pyrage.x25519.Recipient.from_str(age_pub_key)
+    encrypted = pyrage.encrypt(json.dumps(payload_obj).encode(), [recipient])
+    encrypted_payload = base64.b64encode(encrypted).decode()
+
+    # Generate unique branch name and dispatch
+    timestamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    branch_name = f"feat/onboard-{connector_name}-{timestamp}"
+
+    try:
+        github_api(
+            "POST",
+            f"/repos/{platform_repo}/actions/workflows/onboard-connector.yml/dispatches",
+            {
+                "ref": "main",
+                "inputs": {
+                    "connector_name": connector_name,
+                    "connector_type": connector_type,
+                    "encrypted_payload": encrypted_payload,
+                    "requested_by": email,
+                    "branch_name": branch_name,
+                },
+            },
+        )
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode() if e.fp else str(e)
+        return {"error": f"GitHub API error: {e.code} {error_body}"}
+
+    return {
+        "message": f"Onboarding workflow dispatched for connector '{connector_name}'. A PR will be created shortly.",
+        "connector_name": connector_name,
+        "connector_type": connector_type,
+    }
+
+
+def _remove_connector_internal(params, email):
+    """Remove a connector. Returns a dict."""
+    connector_name = params.get("connector_name", "").strip()
+
+    if not connector_name:
+        return {"error": "connector_name is required"}
+
+    platform_repo = get_ssm_param(f"/{APP_NAME}/platform-repo")
+
+    # Verify connector exists
+    try:
+        github_api("GET", f"/repos/{platform_repo}/contents/connectors/{connector_name}?ref=main")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {"error": f"Connector '{connector_name}' not found."}
+        return {"error": f"GitHub API error: {e.code}"}
+
+    # Check for existing removal PR
+    try:
+        prs = github_api("GET", f"/repos/{platform_repo}/pulls?state=open&per_page=100")
+        for pr in (prs or []):
+            head_ref = pr.get("head", {}).get("ref", "")
+            if head_ref.startswith(f"feat/remove-{connector_name}-"):
+                return {"error": f"Connector '{connector_name}' already has a pending removal request (PR #{pr['number']})."}
+    except Exception:
+        pass
+
+    timestamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    branch_name = f"feat/remove-{connector_name}-{timestamp}"
+
+    try:
+        github_api(
+            "POST",
+            f"/repos/{platform_repo}/actions/workflows/remove-connector.yml/dispatches",
+            {
+                "ref": "main",
+                "inputs": {
+                    "connector_name": connector_name,
+                    "requested_by": email,
+                    "branch_name": branch_name,
+                },
+            },
+        )
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode() if e.fp else str(e)
+        return {"error": f"GitHub API error: {e.code} {error_body}"}
+
+    return {"message": f"Removal workflow dispatched for connector '{connector_name}'. A PR will be created shortly."}
+
+
+def _cancel_pr_internal(params):
+    """Cancel a pending PR. Returns a dict."""
+    pr_number = params.get("pr_number")
+    if not pr_number:
+        return {"error": "pr_number is required"}
+
+    platform_repo = get_ssm_param(f"/{APP_NAME}/platform-repo")
+
+    try:
+        pr = github_api("GET", f"/repos/{platform_repo}/pulls/{pr_number}")
+        head_ref = pr.get("head", {}).get("ref", "")
+
+        if not head_ref.startswith("feat/onboard-") and not head_ref.startswith("feat/remove-"):
+            return {"error": "Cannot cancel this PR — it's not a connector onboarding or removal request."}
+
+        github_api("PATCH", f"/repos/{platform_repo}/pulls/{pr_number}", {"state": "closed"})
+
+        try:
+            github_api("DELETE", f"/repos/{platform_repo}/git/refs/heads/{head_ref}")
+        except Exception:
+            pass
+
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode() if e.fp else str(e)
+        return {"error": f"GitHub API error: {e.code} {error_body}"}
+
+    return {"message": f"PR #{pr_number} closed and branch deleted."}
+
+
+# ---------------------------------------------------------------------------
+# Chat (Claude AI with tool use)
+# ---------------------------------------------------------------------------
+
+CHAT_SYSTEM_PROMPT = """You are Provision, an AI assistant for managing data connectors. You help users onboard, list, remove, and manage connectors through natural language.
+
+## Available Connector Types
+
+- **S3**: Config: bucket_name (3-63 chars, lowercase, hyphens, periods), region (AWS region like us-east-1, us-west-2, eu-west-1). No secrets.
+- **PostgreSQL**: Config: host (hostname/IP), port (1-65535, default 5432), database (letters/numbers/underscores). Secrets: username, password.
+- **REST API**: Config: base_url (valid HTTP/HTTPS URL), polling_schedule (cron expression, e.g. "*/15 * * * *"). Secrets: api_key.
+- **SFTP**: Config: host (hostname/IP), port (1-65535, default 22). Secrets: username, ssh_private_key (PEM format).
+
+## Behavior
+
+1. When onboarding a connector, gather all required fields through conversation before calling the tool. Ask for missing fields.
+2. Before destructive actions (remove, cancel), confirm with the user first.
+3. Present connector lists in a readable format. Statuses: "active" = merged and live, "pending" = awaiting PR review, "removing" = removal PR open.
+4. If a tool call fails, explain the error in plain language.
+5. Connector names must be lowercase letters, numbers, and hyphens only.
+6. Never invent values for secret fields — always ask the user.
+7. Keep responses concise."""
+
+CHAT_TOOLS = [
+    {
+        "name": "list_connectors",
+        "description": "List all connectors: active (merged on main), pending onboarding (open PR), and pending removal (open PR). Returns each connector's name, type, status, PR number, and PR URL.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "onboard_connector",
+        "description": "Onboard a new data connector by dispatching a GitHub Actions workflow that creates a PR with the connector configuration. Connector types: s3 (config: bucket_name, region), postgres (config: host, port, database; secrets: username, password), rest-api (config: base_url, polling_schedule; secrets: api_key), sftp (config: host, port; secrets: username, ssh_private_key).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "connector_name": {"type": "string", "description": "Unique name. Lowercase letters, numbers, and hyphens only."},
+                "connector_type": {"type": "string", "enum": ["s3", "postgres", "rest-api", "sftp"]},
+                "config": {"type": "object", "description": "Non-secret configuration fields."},
+                "secrets": {"type": "object", "description": "Secret fields (credentials). Will be encrypted."}
+            },
+            "required": ["connector_name", "connector_type", "config", "secrets"]
+        }
+    },
+    {
+        "name": "remove_connector",
+        "description": "Remove an active connector by dispatching a removal workflow that creates a PR to delete the connector directory.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "connector_name": {"type": "string", "description": "Name of the active connector to remove."}
+            },
+            "required": ["connector_name"]
+        }
+    },
+    {
+        "name": "cancel_pr",
+        "description": "Cancel a pending onboarding or removal request by closing its PR and deleting the branch.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pr_number": {"type": "integer", "description": "The GitHub PR number to cancel."}
+            },
+            "required": ["pr_number"]
+        }
+    }
+]
+
+
+def call_claude_api(messages):
+    """Call Claude API with tool use via raw HTTP."""
+    api_key = get_secret(f"{APP_NAME}/anthropic-api-key")
+    payload = {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 1024,
+        "system": CHAT_SYSTEM_PROMPT,
+        "tools": CHAT_TOOLS,
+        "messages": messages,
+    }
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        method="POST",
+        data=json.dumps(payload).encode(),
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        },
+    )
+    resp = urllib.request.urlopen(req, timeout=25)
+    return json.loads(resp.read())
+
+
+def execute_tool(tool_name, tool_input, email):
+    """Execute a chat tool and return the result as a dict."""
+    try:
+        if tool_name == "list_connectors":
+            return _list_connectors_internal()
+        elif tool_name == "onboard_connector":
+            return _onboard_connector_internal(tool_input, email)
+        elif tool_name == "remove_connector":
+            return _remove_connector_internal(tool_input, email)
+        elif tool_name == "cancel_pr":
+            return _cancel_pr_internal(tool_input)
+        else:
+            return {"error": f"Unknown tool: {tool_name}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def handle_chat(normalized):
+    """AI chat endpoint with Claude tool use loop."""
+    body = normalized["body"]
+    if normalized["isBase64Encoded"]:
+        body = base64.b64decode(body).decode()
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, TypeError):
+        return response_json(400, {"error": "Invalid JSON body"})
+
+    # Validate authorization
+    headers = normalized["headers"]
+    auth_header = None
+    for key, value in headers.items():
+        if key.lower() == "authorization":
+            auth_header = value
+            break
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return response_json(401, {"error": "Missing or invalid Authorization header"})
+
+    token = auth_header[7:]
+    try:
+        claims = validate_cognito_token(token)
+    except Exception as e:
+        return response_json(401, {"error": f"Token validation failed: {str(e)}"})
+
+    email = claims.get("email", "unknown")
+    messages = payload.get("messages", [])
+
+    if not messages:
+        return response_json(400, {"error": "messages array is required"})
+
+    # Tool-use agentic loop
+    MAX_TOOL_ROUNDS = 5
+    for _ in range(MAX_TOOL_ROUNDS):
+        try:
+            response = call_claude_api(messages)
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode() if e.fp else str(e)
+            return response_json(502, {"error": f"Claude API error: {e.code} {error_body}"})
+        except Exception as e:
+            return response_json(502, {"error": f"Claude API error: {str(e)}"})
+
+        # Append assistant response to messages
+        messages.append({"role": "assistant", "content": response["content"]})
+
+        # Check for tool_use blocks
+        tool_uses = [b for b in response["content"] if b.get("type") == "tool_use"]
+        if not tool_uses:
+            break  # Pure text response, done
+
+        # Execute each tool and collect results
+        tool_results = []
+        for tool_use in tool_uses:
+            result = execute_tool(tool_use["name"], tool_use["input"], email)
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tool_use["id"],
+                "content": json.dumps(result),
+            })
+
+        messages.append({"role": "user", "content": tool_results})
+
+    # Extract text from the last assistant message
+    assistant_text = ""
+    if messages and messages[-1].get("role") == "assistant":
+        for block in messages[-1]["content"]:
+            if isinstance(block, dict) and block.get("type") == "text":
+                assistant_text += block["text"]
+
+    return response_json(200, {
+        "reply": assistant_text,
+        "messages": messages,
+    })
 
 
 def handle_run_status(normalized):
@@ -716,6 +1052,8 @@ def handler(event, context):
         return handle_remove(normalized)
     elif method == "POST" and path == "/cancel-pr":
         return handle_cancel_pr(normalized)
+    elif method == "POST" and path == "/chat":
+        return handle_chat(normalized)
     elif method == "GET" and path == "/connectors":
         return handle_connectors(normalized)
     elif method == "GET" and path == "/run-status":

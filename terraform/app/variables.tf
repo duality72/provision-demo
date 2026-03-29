@@ -54,3 +54,9 @@ variable "github_app_installation_id" {
   description = "GitHub App installation ID"
   type        = string
 }
+
+variable "anthropic_api_key" {
+  description = "Anthropic API key for Claude chat feature"
+  type        = string
+  sensitive   = true
+}

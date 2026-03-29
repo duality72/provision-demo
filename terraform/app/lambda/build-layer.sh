@@ -12,7 +12,8 @@ pip install --target "${TARGET}" --quiet \
   --python-version 3.12 \
   --only-binary=:all: \
   "PyJWT[crypto]>=2.8.0" \
-  "cryptography>=41.0.0"
+  "cryptography>=41.0.0" \
+  "pyrage>=1.3.0"
 
 echo "Creating lambda-layer.zip..."
 cd "${LAYER_DIR}"

@@ -43,7 +43,8 @@ resource "aws_iam_role_policy" "lambda_app" {
         ]
         Resource = [
           aws_secretsmanager_secret.github_app_key.arn,
-          aws_secretsmanager_secret.age_secret_key.arn
+          aws_secretsmanager_secret.age_secret_key.arn,
+          aws_secretsmanager_secret.anthropic_api_key.arn
         ]
       },
       {
