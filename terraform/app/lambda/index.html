@@ -1206,7 +1206,11 @@
                 if (!resp.ok) {
                     appendChatBubble("assistant", `Error: ${data.error || "Something went wrong."}`);
                 } else {
-                    appendChatBubble("assistant", data.reply);
+                    if (data.reply) {
+                        appendChatBubble("assistant", data.reply);
+                    } else {
+                        appendChatBubble("assistant", "Done. What's next?");
+                    }
                     chatMessages = data.messages;
                     if (data.handoff && data.handoff.handoff === "onboard_form") {
                         prefillOnboardForm(data.handoff);
