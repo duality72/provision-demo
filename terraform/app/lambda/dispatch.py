@@ -839,9 +839,13 @@ CHAT_SYSTEM_PROMPT = """You are Provision, an AI assistant for managing data con
 
 ## Behavior
 
-1. When onboarding a connector, gather all required config fields (NOT secrets) through conversation, then call prepare_onboard. The system will switch the user to a secure form pre-filled with the config, where they enter secrets directly. Secrets are encrypted client-side and never pass through this chat.
-2. Do NOT ask users for passwords, API keys, SSH keys, or other secret values in chat. Tell them these will be entered securely in the form.
-3. Before destructive actions (remove, cancel), confirm with the user first.
+1. When onboarding a connector, first gather the config fields and call prepare_onboard. This validates the connector and pre-fills the onboarding form in the background.
+2. After preparing, ask the user for the required secrets (if any for the connector type). Offer two options:
+   - Provide them here in the chat (they will pass through the AI service but are encrypted before storage)
+   - Switch to the Onboard tab where the form is pre-filled and enter secrets there with client-side encryption (more secure)
+3. If the user provides secrets in chat, call onboard_connector to complete the onboarding.
+4. If the connector type has no secrets (e.g., S3), call onboard_connector directly after prepare_onboard.
+5. Before destructive actions (remove, cancel), confirm with the user first.
 4. Present connector lists in a readable format. Statuses: "active" = merged and live, "pending" = awaiting PR review, "removing" = removal PR open.
 5. If a tool call fails, explain the error in plain language.
 6. Connector names must be lowercase letters, numbers, and hyphens only.
@@ -868,6 +872,20 @@ CHAT_TOOLS = [
                 "config": {"type": "object", "description": "Non-secret configuration fields only."}
             },
             "required": ["connector_name", "connector_type", "config"]
+        }
+    },
+    {
+        "name": "onboard_connector",
+        "description": "Complete the onboarding of a connector that was already validated with prepare_onboard. Call this when the user provides secrets in chat, or immediately for connector types with no secrets (like S3). Always call prepare_onboard first.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "connector_name": {"type": "string", "description": "The connector name (must match what was passed to prepare_onboard)."},
+                "connector_type": {"type": "string", "enum": ["s3", "postgres", "rest-api", "sftp"]},
+                "config": {"type": "object", "description": "Non-secret configuration fields."},
+                "secrets": {"type": "object", "description": "Secret fields provided by the user. Will be encrypted server-side."}
+            },
+            "required": ["connector_name", "connector_type", "config", "secrets"]
         }
     },
     {
@@ -926,6 +944,8 @@ def execute_tool(tool_name, tool_input, email):
             return _list_connectors_internal()
         elif tool_name == "prepare_onboard":
             return _prepare_onboard_internal(tool_input)
+        elif tool_name == "onboard_connector":
+            return _onboard_connector_internal(tool_input, email)
         elif tool_name == "remove_connector":
             return _remove_connector_internal(tool_input, email)
         elif tool_name == "cancel_pr":

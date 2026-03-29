@@ -1238,9 +1238,7 @@
                     if (el) el.value = String(value);
                 }
             }
-
-            // Switch to onboard tab after a short delay so user sees the chat message
-            setTimeout(() => switchTab("onboard"), 1000);
+            // Form is pre-filled silently — user can switch to Onboard tab at any time
         }
 
         function appendChatBubble(role, text) {
