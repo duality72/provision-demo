@@ -1502,6 +1502,9 @@
                 document.getElementById("form-section").classList.remove("hidden");
             }
 
+            // Clear stale values before setting new ones
+            document.getElementById("connector_name").value = "";
+
             // Set connector type and trigger field rendering (if provided)
             if (handoff.connector_type) {
                 const typeSelect = document.getElementById("connector_type");
