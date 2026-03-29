@@ -1317,6 +1317,11 @@
         }
 
         function prefillOnboardForm(handoff) {
+            // Reset form view if status section is showing (previous submission)
+            document.getElementById("status-section").classList.add("hidden");
+            document.getElementById("result-card").classList.add("hidden");
+            document.getElementById("form-section").classList.remove("hidden");
+
             // Set connector type and trigger field rendering (if provided)
             if (handoff.connector_type) {
                 const typeSelect = document.getElementById("connector_type");
