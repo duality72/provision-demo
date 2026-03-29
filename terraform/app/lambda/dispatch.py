@@ -546,7 +546,7 @@ def handle_cancel_pr(normalized):
             if "**Requested by:**" in line:
                 requested_by = line.split("**Requested by:**")[-1].strip()
                 break
-        if requested_by and requested_by != email:
+        if not requested_by or requested_by != email:
             return response_json(403, {"error": "You can only cancel your own connector requests."})
 
         # Close the PR
@@ -578,8 +578,8 @@ def handle_connectors(normalized):
         return response_json(401, {"error": "Authentication required"})
     try:
         validate_cognito_token(auth_header[7:])
-    except Exception as e:
-        return response_json(401, {"error": f"Token validation failed: {str(e)}"})
+    except Exception:
+        return response_json(401, {"error": "Invalid or expired token"})
 
     return response_json(200, _list_connectors_internal())
 
