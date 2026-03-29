@@ -322,6 +322,33 @@
             margin-bottom: 0;
             flex: 1;
         }
+        .btn-mic {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2.25rem;
+            min-width: 2.25rem;
+            height: 2.25rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 0.5rem;
+            background: #fff;
+            color: #64748b;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+            padding: 0;
+        }
+        .btn-mic:hover { background: #f1f5f9; }
+        .btn-mic.listening {
+            background: #fef2f2;
+            border-color: #dc2626;
+            color: #dc2626;
+            animation: pulse-mic 1.5s infinite;
+        }
+        @keyframes pulse-mic {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.3); }
+            50% { box-shadow: 0 0 0 6px rgba(220,38,38,0); }
+        }
         .empty-state {
             text-align: center;
             padding: 2rem;
@@ -374,6 +401,7 @@
                     </div>
                     <div class="chat-input-bar">
                         <input type="text" id="chat-input" placeholder="Type a message..." onkeydown="if(event.key==='Enter')sendChat()">
+                        <button class="btn-mic" id="mic-btn" onclick="toggleVoice()" title="Voice input (Chrome/Edge)">&#x1F3A4;</button>
                         <button class="btn-primary" id="chat-send-btn" onclick="sendChat()">Send</button>
                     </div>
                 </div>
@@ -1147,11 +1175,15 @@
 
         // ── Chat ─────────────────────────────────────────
         let chatMessages = [];
+        let lastInputWasVoice = false;
 
         window.sendChat = async function () {
             const input = document.getElementById("chat-input");
             const text = input.value.trim();
             if (!text) return;
+
+            const wasVoice = lastInputWasVoice;
+            lastInputWasVoice = false;
 
             input.value = "";
             input.disabled = true;
@@ -1179,6 +1211,7 @@
                 } else {
                     appendChatBubble("assistant", data.reply);
                     chatMessages = data.messages;
+                    if (wasVoice && data.reply) speakText(data.reply);
                     if (data.handoff && data.handoff.handoff === "onboard_form") {
                         prefillOnboardForm(data.handoff);
                     }
@@ -1222,6 +1255,81 @@
             container.appendChild(div);
             container.scrollTop = container.scrollHeight;
             return div;
+        }
+
+        // ── Voice input ──────────────────────────────────
+        let recognition = null;
+        let isListening = false;
+
+        function initSpeechRecognition() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {
+                document.getElementById("mic-btn").style.display = "none";
+                return;
+            }
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = true;
+            recognition.lang = "en-US";
+
+            recognition.onresult = function (event) {
+                let transcript = "";
+                for (let i = 0; i < event.results.length; i++) {
+                    transcript += event.results[i][0].transcript;
+                }
+                document.getElementById("chat-input").value = transcript;
+            };
+
+            recognition.onend = function () {
+                isListening = false;
+                document.getElementById("mic-btn").classList.remove("listening");
+                // Auto-send if we got a final result
+                const input = document.getElementById("chat-input");
+                if (input.value.trim()) {
+                    lastInputWasVoice = true;
+                    sendChat();
+                }
+            };
+
+            recognition.onerror = function (event) {
+                isListening = false;
+                document.getElementById("mic-btn").classList.remove("listening");
+                if (event.error !== "no-speech") {
+                    console.error("Speech recognition error:", event.error);
+                }
+            };
+        }
+
+        window.toggleVoice = function () {
+            if (!recognition) {
+                initSpeechRecognition();
+                if (!recognition) return;
+            }
+            if (isListening) {
+                recognition.stop();
+                isListening = false;
+                document.getElementById("mic-btn").classList.remove("listening");
+            } else {
+                document.getElementById("chat-input").value = "";
+                recognition.start();
+                isListening = true;
+                document.getElementById("mic-btn").classList.add("listening");
+            }
+        };
+
+        // Initialize speech recognition on load
+        initSpeechRecognition();
+
+        // Read agent responses aloud
+        function speakText(text) {
+            if (!window.speechSynthesis) return;
+            // Strip markdown formatting for cleaner speech
+            const clean = text.replace(/[*#`\[\]()]/g, "").replace(/\n+/g, ". ").trim();
+            if (!clean) return;
+            const utterance = new SpeechSynthesisUtterance(clean);
+            utterance.rate = 1.1;
+            utterance.pitch = 1;
+            speechSynthesis.speak(utterance);
         }
 
         // ── UI helpers ──────────────────────────────────
