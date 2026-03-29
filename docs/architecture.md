@@ -107,7 +107,7 @@ The Lambda function (`dispatch.py`) serves the following routes:
 | POST | `/remove` | JWT | Validates connector exists, dispatches removal workflow |
 | POST | `/cancel-pr` | JWT | Closes a pending PR and deletes its branch |
 | POST | `/chat` | JWT | AI chat with Claude tool-use loop (up to 5 rounds) |
-| GET | `/connectors` | No | Lists active, pending onboard, and pending removal connectors |
+| GET | `/connectors` | JWT | Lists active, pending onboard, and pending removal connectors |
 | GET | `/run-status` | No | Checks workflow run status and finds resulting PR |
 
 Configuration:

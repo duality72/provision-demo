@@ -987,7 +987,9 @@
         async function loadConnectors() {
             hideConnectorsError();
             try {
-                const resp = await fetch("/connectors");
+                const resp = await fetch("/connectors", {
+                    headers: { "Authorization": `Bearer ${idToken}` }
+                });
                 if (!resp.ok) throw new Error(`Failed: ${resp.status}`);
                 const data = await resp.json();
                 const connectors = data.connectors || [];
