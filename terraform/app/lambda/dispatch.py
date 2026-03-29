@@ -640,6 +640,46 @@ def _update_form_internal(params):
     }
 
 
+CONNECTOR_SECRET_FIELDS = {
+    "s3": [],
+    "postgres": ["username", "password"],
+    "rest-api": ["api_key"],
+    "sftp": ["username", "ssh_private_key"],
+}
+
+
+def _submit_onboard_internal(params):
+    """Submit a connector for onboarding. Returns a handoff for secure secret input if needed."""
+    connector_name = params.get("connector_name", "").strip()
+    connector_type = params.get("connector_type", "").strip()
+    config = params.get("config", {})
+
+    if not connector_name or connector_type not in CONNECTOR_TYPES:
+        return {"error": "Invalid connector name or type."}
+
+    secret_fields = CONNECTOR_SECRET_FIELDS.get(connector_type, [])
+
+    if secret_fields:
+        # Return a handoff — frontend will show a secure inline form for secrets
+        return {
+            "handoff": "secure_secrets",
+            "message": f"A secure input form will appear for you to enter the required secrets ({', '.join(secret_fields)}). Secrets are encrypted in your browser and never pass through the chat.",
+            "connector_name": connector_name,
+            "connector_type": connector_type,
+            "config": config,
+            "secret_fields": secret_fields,
+        }
+    else:
+        # No secrets needed (e.g., S3) — submit directly via form
+        return {
+            "handoff": "auto_submit",
+            "message": f"Submitting {connector_name} for onboarding...",
+            "connector_name": connector_name,
+            "connector_type": connector_type,
+            "config": config,
+        }
+
+
 def _prepare_onboard_internal(params):
     """Validate config for onboarding and return handoff data."""
     connector_name = params.get("connector_name", "").strip()
@@ -902,11 +942,9 @@ CHAT_SYSTEM_PROMPT = """You are Provision, an AI assistant for managing data con
 2. Ask in this order: connector type, connector name, then each config field for that type one by one.
 3. Validate values as you go — for example, region must be a valid AWS region (us-east-1, us-west-2, etc.), port must be 1-65535, URLs must start with http/https. If a value is invalid, explain why and ask again.
 4. Once all config fields are gathered, show a summary and ask the user to confirm before submitting. Mention they can also check or edit the pre-filled form on the Onboard tab.
-5. For connector types with secrets: after config confirmation, offer two options:
-   - Provide secrets here in the chat (they pass through the AI service but are encrypted before storage)
-   - Switch to the Onboard tab where the form is pre-filled — enter secrets there for client-side encryption (more secure)
-6. If the user provides secrets in chat, call onboard_connector to complete the onboarding.
-7. If the connector type has no secrets (e.g., S3), call onboard_connector after user confirms the config summary.
+5. For connector types with secrets: after user confirms, call submit_onboard. A secure input form will appear inline in the chat for the user to enter secrets — secrets are encrypted client-side and never pass through this chat.
+6. For connector types with no secrets (e.g., S3): call submit_onboard after user confirms. Submission proceeds immediately.
+7. NEVER ask users to type passwords, API keys, SSH keys, or other secrets in the chat. Always use submit_onboard which handles secrets securely.
 8. Before destructive actions (remove, cancel), confirm with the user first.
 9. If the user provides multiple fields at once, that's fine — call update_form with all of them.
 4. Present connector lists in a readable format. Statuses: "active" = merged and live, "pending" = awaiting PR review, "removing" = removal PR open.
@@ -938,17 +976,16 @@ CHAT_TOOLS = [
         }
     },
     {
-        "name": "onboard_connector",
-        "description": "Complete the onboarding of a connector after the user confirms. Returns a run_id and run_url for tracking progress. For types with no secrets (S3), pass an empty secrets object. The system validates all fields server-side and returns errors for invalid values.",
+        "name": "submit_onboard",
+        "description": "Submit a connector for onboarding after the user confirms the config summary. For connector types with secrets, a secure inline form will appear in the chat for the user to enter secrets with client-side encryption. For types with no secrets (S3), submission proceeds immediately. Always call update_form first to ensure the form is pre-filled.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "connector_name": {"type": "string", "description": "The connector name (must match what was passed to prepare_onboard)."},
+                "connector_name": {"type": "string", "description": "The connector name."},
                 "connector_type": {"type": "string", "enum": ["s3", "postgres", "rest-api", "sftp"]},
-                "config": {"type": "object", "description": "Non-secret configuration fields."},
-                "secrets": {"type": "object", "description": "Secret fields provided by the user. Will be encrypted server-side."}
+                "config": {"type": "object", "description": "Non-secret configuration fields."}
             },
-            "required": ["connector_name", "connector_type", "config", "secrets"]
+            "required": ["connector_name", "connector_type", "config"]
         }
     },
     {
@@ -1007,8 +1044,8 @@ def execute_tool(tool_name, tool_input, email):
             return _list_connectors_internal()
         elif tool_name == "update_form":
             return _update_form_internal(tool_input)
-        elif tool_name == "onboard_connector":
-            return _onboard_connector_internal(tool_input, email)
+        elif tool_name == "submit_onboard":
+            return _submit_onboard_internal(tool_input)
         elif tool_name == "remove_connector":
             return _remove_connector_internal(tool_input, email)
         elif tool_name == "cancel_pr":
