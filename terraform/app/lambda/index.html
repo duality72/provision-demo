@@ -1416,7 +1416,8 @@
             document.getElementById("result-card").classList.add("hidden");
 
             // Show progress in chat
-            const progressBubble = appendChatBubble("thinking", `Waiting for ${connectorName} workflow result...`);
+            const runLink = dispatch.run_url ? ` [View workflow](${dispatch.run_url})` : "";
+            const progressBubble = appendChatBubble("thinking", `Waiting for ${connectorName} workflow result...${runLink}`);
 
             // Start polling (same as form flow, plus chat result)
             if (pollTimer) clearInterval(pollTimer);

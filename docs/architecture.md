@@ -67,6 +67,34 @@ Provision Demo is a two-repo system for self-service connector onboarding. A web
      │ <─────────────────────────────┘
 ```
 
+## Chat Agent
+
+The Chat tab provides an AI agent powered by Claude's tool-use API. The agent manages connectors through natural language conversation.
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `list_connectors` | Lists all connectors with their status |
+| `update_form` | Pre-fills the Onboard form incrementally as fields are gathered |
+| `submit_onboard` | Triggers secure submission — inline secret form or auto-submit for no-secret types |
+| `remove_connector` | Dispatches a connector removal workflow |
+| `cancel_pr` | Closes a pending PR and deletes its branch |
+
+### Security Model
+
+Secrets never pass through the Claude API. When the agent calls `submit_onboard` for a connector type with secrets, the Lambda returns a `secure_secrets` handoff. The frontend renders an inline form with password fields in the chat. When the user fills in the secrets and clicks "Encrypt & Submit":
+
+1. Secrets are encrypted client-side with age in the browser
+2. The encrypted payload is sent directly to `/dispatch` (not `/chat`)
+3. Claude only sees non-secret config fields (hosts, ports, regions)
+
+For connector types without secrets (S3), submission proceeds automatically after the user confirms.
+
+### Voice Input
+
+The chat includes a microphone button for voice-to-text input using the browser's SpeechRecognition API. Available in Chrome and Edge only — the button is hidden in unsupported browsers. Voice input is transcribed to text and auto-sent. Responses are text only (no text-to-speech).
+
 ## Lambda Function
 
 The Lambda function (`dispatch.py`) serves the following routes:
@@ -78,6 +106,7 @@ The Lambda function (`dispatch.py`) serves the following routes:
 | POST | `/dispatch` | JWT | Validates connector, checks for duplicates, dispatches onboard workflow |
 | POST | `/remove` | JWT | Validates connector exists, dispatches removal workflow |
 | POST | `/cancel-pr` | JWT | Closes a pending PR and deletes its branch |
+| POST | `/chat` | JWT | AI chat with Claude tool-use loop (up to 5 rounds) |
 | GET | `/connectors` | No | Lists active, pending onboard, and pending removal connectors |
 | GET | `/run-status` | No | Checks workflow run status and finds resulting PR |
 
@@ -114,7 +143,7 @@ The `/connectors` endpoint parses branch names to extract the connector name by 
 
 ## Frontend SPA
 
-The SPA (`index.html`) is a vanilla JavaScript application with two tabs:
+The SPA (`index.html`) is a vanilla JavaScript application with three tabs:
 
 ### Onboard Tab
 - Connector type dropdown (S3, PostgreSQL, REST API, SFTP)
@@ -135,6 +164,17 @@ The SPA (`index.html`) is a vanilla JavaScript application with two tabs:
 - Each pending item shows PR link, requester, and a Copy to Clipboard button
 - Deduplication: if a connector appears as both active and pending removal, only the removal entry is shown
 - Auto-refresh: the list refreshes when a removal workflow completes
+
+### Chat Tab
+- Conversation UI with message bubbles (user in blue, assistant in gray)
+- Voice input via microphone button (Chrome/Edge only, hidden elsewhere)
+- Markdown rendering in assistant messages (links, bold)
+- Incremental form pre-fill: each field gathered in chat updates the Onboard tab form
+- Secure inline secret entry: password fields rendered in chat, encrypted client-side
+- Progress tracking: "Waiting for workflow result..." with link to GitHub Actions run
+- Result display: PR link and copy-to-clipboard on completion
+- Session persistence: conversation history maintained in memory, auth token in sessionStorage
+- Expired token handling: detects 401 errors and prompts re-login
 
 ## Cognito
 
@@ -207,6 +247,7 @@ The PKCE flow prevents authorization code interception attacks:
 | Age secret key | AWS Secrets Manager + GitHub Actions secret |
 | Age public key | SSM Parameter Store (not sensitive) |
 | GitHub App ID | SSM Parameter Store (not sensitive) |
+| Anthropic API key | AWS Secrets Manager |
 | Cognito client ID | SSM Parameter Store (not sensitive) |
 
 ## Infrastructure

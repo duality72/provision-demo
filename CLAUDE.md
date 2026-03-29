@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is the Provision Demo app — a self-service connector onboarding system. See README.md for architecture details and docs/architecture.md for the full technical spec.
+This is the Provision Demo app — a self-service connector onboarding system with an AI chat agent. See README.md for architecture details and docs/architecture.md for the full technical spec.
 
 Two repos work together:
 - **provision-demo** (this repo): Lambda + SPA frontend + all Terraform
@@ -27,7 +27,7 @@ After every deploy, run a Playwright E2E test against the live app:
 - Login: Cognito hosted UI with the demo user
 - Test the specific feature that changed AND verify nothing else broke
 
-Always test both the Onboard tab and the Connectors tab after changes to shared code (dispatch.py, index.html).
+Always test all three tabs (Onboard, Connectors, Chat) after changes to shared code (dispatch.py, index.html).
 
 ### Test edge cases
 
@@ -36,7 +36,8 @@ Don't just test the happy path. For any new feature, test:
 - Invalid input (each field validator)
 - Cancellation mid-flow
 - Tab switching during active workflows
-- Page reload to verify state persists
+- Page reload to verify session persists
+- Chat agent behavior with ambiguous or partial input
 
 ### Leave test data realistic
 
@@ -51,6 +52,18 @@ After E2E testing, leave connectors in a variety of states — some active, some
 - GitHub API calls go through `github_api()` which handles App authentication
 - Use `get_ssm_param()` and `get_secret()` for AWS config (they cache automatically)
 - New endpoints need: auth validation, input validation, error handling with `response_json()`, and a route entry in `handler()`
+- Internal functions (`_list_connectors_internal`, `_remove_connector_internal`, etc.) are shared by both HTTP handlers and chat tools — don't duplicate logic
+
+### Chat agent (dispatch.py)
+
+- The chat endpoint (`POST /chat`) runs a Claude tool-use loop with up to 5 rounds
+- Tools: `list_connectors`, `update_form`, `submit_onboard`, `remove_connector`, `cancel_pr`
+- `update_form` returns a handoff that pre-fills the Onboard form incrementally
+- `submit_onboard` returns a handoff — `secure_secrets` (shows inline encrypted form) or `auto_submit` (no secrets needed)
+- Secrets NEVER pass through Claude — they are entered in a secure inline form and encrypted client-side with age
+- The system prompt (`CHAT_SYSTEM_PROMPT`) controls agent behavior — update it when changing the onboarding flow
+- Server-side validation in `_onboard_connector_internal` mirrors the frontend's `FIELD_VALIDATORS`
+- `pyrage` is used for server-side age encryption (in the Lambda layer)
 
 ### SPA (index.html)
 
@@ -61,13 +74,17 @@ After E2E testing, leave connectors in a variety of states — some active, some
 - Field validation happens in `submitForm()` using `FIELD_VALIDATORS`
 - New fields that are dropdowns or special types: set `type: "select"` or `type: "number"` in `FIELD_VALIDATORS`
 - The age-encryption library is loaded from esm.sh (not jsDelivr) because jsDelivr doesn't bundle dependencies for browser ESM imports
+- Chat bubbles render markdown links `[text](url)` and `**bold**` as HTML
+- Voice input uses browser SpeechRecognition API (Chrome/Edge only) — mic button is hidden in unsupported browsers
+- Session tokens stored in sessionStorage (survives reload, clears on tab close), with expiry check on restore
 
 ### Connector types
 
-Adding a new connector type requires changes in three places:
+Adding a new connector type requires changes in:
 1. `CONNECTOR_REGISTRY` + `FIELD_VALIDATORS` + `SECRET_TOOLTIPS` in index.html
-2. `CONNECTOR_TYPES` in dispatch.py
-3. `CONNECTOR_REGISTRY` in generate_connector.py (platform repo)
+2. `CONNECTOR_TYPES` + `CONNECTOR_SECRET_FIELDS` in dispatch.py
+3. `CHAT_SYSTEM_PROMPT` in dispatch.py (update the connector types list)
+4. `CONNECTOR_REGISTRY` in generate_connector.py (platform repo)
 
 ### Branch naming
 
@@ -96,9 +113,16 @@ All actions should use Node.js 24 compatible versions:
 ## Common Gotchas
 
 - **Lambda layer**: Must be built for Linux x86_64 (`--platform manylinux2014_x86_64` in build-layer.sh), not macOS
+- **Lambda layer packages**: PyJWT, cryptography, and pyrage (for server-side age encryption)
+- **Lambda timeout**: 60s to accommodate multi-round Claude tool-use loops
 - **Function URL permissions**: Needs both `lambda:InvokeFunctionUrl` AND `lambda:InvokeFunction`
 - **SSM DescribeParameters**: Needs account-level resource ARN, not parameter-level
 - **Cognito IAM**: Needs `Resource: "*"` for cognito-idp actions
 - **age-encryption CDN**: Use esm.sh, not jsDelivr (bare specifier imports don't work in browsers)
 - **Cron validation regex**: Must allow `*` combined with `/` (e.g., `*/15`)
 - **GitHub API 503s**: Transient — the UI should handle errors gracefully and let the user retry
+- **Token expiry**: Cognito tokens expire after 1 hour — the frontend checks expiry on restore and clears expired tokens
+- **Chat empty replies**: If Claude's tool-use loop ends with no text, the frontend shows "Done. What's next?" fallback
+- **Chat handoff variable**: Must be initialized before the tool-use loop (not inside it)
+- **Form state on tab switch**: `currentRunId` must be cleared when starting a new connector from chat, otherwise the Onboard tab shows the previous result
+- **Anthropic API key**: Stored in Secrets Manager, requires API credits (separate from Claude Max subscription)

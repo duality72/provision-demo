@@ -1,15 +1,16 @@
 # Provision Demo
 
-A self-service connector onboarding application. Users authenticate via Cognito, fill out a form with connector configuration and credentials, which are encrypted client-side using age encryption, then dispatched as a GitHub Actions workflow to a platform repository. The workflow creates a pull request with the new connector configuration.
+A self-service connector onboarding application with an AI chat agent. Users can onboard connectors through a traditional form or via natural language chat powered by Claude. The AI agent gathers configuration through conversation, pre-fills the form in real-time, and handles secrets securely with client-side encryption. Authentication is via Cognito, and all changes are PR-based through GitHub Actions.
 
 ## Architecture Overview
 
-The application is a single Lambda function behind a Function URL, serving both the SPA frontend and API endpoints. Authentication is handled by Amazon Cognito with PKCE. Secrets are encrypted in the browser using age public-key encryption before being sent to the backend, which dispatches a GitHub Actions workflow via a GitHub App.
+The application is a single Lambda function behind a Function URL, serving both the SPA frontend and API endpoints. Authentication is handled by Amazon Cognito with PKCE. Secrets are encrypted in the browser using age public-key encryption before being sent to the backend, which dispatches a GitHub Actions workflow via a GitHub App. The chat feature uses Claude's tool-use API to orchestrate connector operations.
 
 See [docs/architecture.md](docs/architecture.md) for detailed architecture documentation.
 
 ## Features
 
+- **Chat tab**: AI agent powered by Claude that manages connectors via natural language — gathers config one field at a time, pre-fills the form in real-time, and presents secure inline forms for credential entry with client-side encryption. Includes voice input (Chrome/Edge)
 - **Onboard tab**: Submit connector onboarding requests with type-specific forms, field validation, and hover tooltips
 - **Connectors tab**: View active connectors, pending onboarding requests, and pending removal requests
 - **Connector removal**: Remove active connectors via a PR-based review flow
@@ -129,6 +130,7 @@ provision-demo/
 | POST | `/dispatch` | JWT | Validates connector, dispatches onboard workflow |
 | POST | `/remove` | JWT | Dispatches connector removal workflow |
 | POST | `/cancel-pr` | JWT | Closes a pending onboard/removal PR and deletes its branch |
+| POST | `/chat` | JWT | AI chat with Claude tool-use loop for natural language connector management |
 | GET | `/connectors` | No | Lists active, pending, and removing connectors |
 | GET | `/run-status` | No | Checks workflow run status and finds resulting PR |
 
@@ -156,6 +158,19 @@ provision-demo/
 5. The connectors list auto-refreshes when the workflow completes
 6. The connector shows as "pending removal" with an inline info box until the PR is merged
 
+### Onboarding via Chat
+
+1. User opens the Chat tab and describes what they want (e.g., "I need a PostgreSQL connector")
+2. The AI agent asks for fields one at a time — connector type, name, then each config field
+3. After each answer, the Onboard tab form is pre-filled in real-time (user can switch to check it)
+4. The agent validates inputs (regions, ports, URLs) and asks again if invalid
+5. Once all config is gathered, the agent shows a summary and asks for confirmation
+6. For types with secrets: a secure inline form appears in the chat with password fields — secrets are encrypted client-side with age and sent directly to `/dispatch`, never passing through Claude
+7. For types without secrets (S3): submission proceeds immediately after confirmation
+8. The chat shows progress ("Waiting for workflow result...") with a link to the GitHub Actions run
+9. On completion, a result bubble with the PR link and copy-to-clipboard appears in the chat
+10. The Onboard tab shows identical progress/results — users can switch between tabs freely
+
 ### Cancelling a Request
 
 1. User clicks "Cancel" on any pending onboarding or removal entry
@@ -179,6 +194,7 @@ provision-demo/
 - **Least-privilege IAM**: The Lambda role can only read specific SSM parameters, specific Secrets Manager secrets, and encrypt with the SOPS KMS key.
 - **KMS key rotation**: The SOPS KMS key has automatic annual rotation enabled.
 - **No secrets in environment variables**: The GitHub App private key and age secret key are stored in Secrets Manager, not in Lambda environment variables.
+- **Chat security**: The AI chat agent never sees secret values. When secrets are needed, a secure inline form appears in the chat — secrets are encrypted client-side with age in the browser and sent directly to the dispatch endpoint, bypassing Claude entirely. Non-secret config fields (hosts, ports, regions) do pass through the Claude API.
 
 ## CI/CD
 
