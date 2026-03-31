@@ -25,9 +25,48 @@
             font-weight: 600;
             color: #0f172a;
         }
-        header .user-info {
+        .user-menu {
+            position: relative;
             font-size: 0.875rem;
             color: #64748b;
+        }
+        .user-menu-toggle {
+            cursor: pointer;
+            padding: 0.25rem 0;
+        }
+        .user-menu-toggle:hover { color: #1e293b; }
+        .user-menu-toggle::after {
+            content: " \25BE";
+            font-size: 0.7rem;
+        }
+        .user-menu-dropdown {
+            display: none;
+            position: absolute;
+            right: 0;
+            top: 100%;
+            margin-top: 0.25rem;
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            min-width: 120px;
+            z-index: 20;
+        }
+        .user-menu-dropdown.open { display: block; }
+        .user-menu-dropdown button {
+            display: block;
+            width: 100%;
+            text-align: left;
+            padding: 0.5rem 0.75rem;
+            border: none;
+            background: none;
+            font-size: 0.8125rem;
+            color: #475569;
+            cursor: pointer;
+        }
+        .user-menu-dropdown button:hover {
+            background: #f1f5f9;
+            color: #1e293b;
         }
         main {
             max-width: 640px;
@@ -361,7 +400,12 @@
     <div id="app">
         <header>
             <h1>Provision</h1>
-            <span class="user-info" id="user-info"></span>
+            <div class="user-menu" id="user-menu" style="display:none">
+                <span class="user-menu-toggle" id="user-info" onclick="toggleUserMenu()"></span>
+                <div class="user-menu-dropdown" id="user-dropdown">
+                    <button onclick="signOut()">Sign out</button>
+                </div>
+            </div>
         </header>
         <main>
             <!-- Auth Section -->
@@ -1616,10 +1660,37 @@
         initSpeechRecognition();
 
         // ── UI helpers ──────────────────────────────────
+        window.toggleUserMenu = function () {
+            document.getElementById("user-dropdown").classList.toggle("open");
+        };
+
+        window.signOut = function () {
+            idToken = null;
+            sessionStorage.removeItem("id_token");
+            chatMessages = [];
+            document.getElementById("user-menu").style.display = "none";
+            document.getElementById("user-dropdown").classList.remove("open");
+            document.getElementById("auth-section").classList.remove("hidden");
+            document.getElementById("tab-nav").classList.add("hidden");
+            document.getElementById("form-section").classList.add("hidden");
+            document.getElementById("status-section").classList.add("hidden");
+            document.getElementById("connectors-section").classList.add("hidden");
+            document.getElementById("chat-section").classList.add("hidden");
+        };
+
+        // Close user menu when clicking outside
+        document.addEventListener("click", function (e) {
+            const menu = document.getElementById("user-menu");
+            if (menu && !menu.contains(e.target)) {
+                document.getElementById("user-dropdown").classList.remove("open");
+            }
+        });
+
         function showFormSection() {
             document.getElementById("auth-section").classList.add("hidden");
             document.getElementById("tab-nav").classList.remove("hidden");
             document.getElementById("form-section").classList.remove("hidden");
+            document.getElementById("user-menu").style.display = "";
         }
 
         function showError(msg) {
