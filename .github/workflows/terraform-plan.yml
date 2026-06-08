@@ -3,9 +3,6 @@ name: Terraform Plan
 on:
   pull_request:
     branches: [main]
-    paths:
-      - 'terraform/app/**'
-      - 'terraform/github/**'
 
 permissions:
   id-token: write
