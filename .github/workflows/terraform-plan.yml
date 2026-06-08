@@ -3,9 +3,6 @@ name: Terraform Plan
 on:
   pull_request:
     branches: [main]
-    paths:
-      - 'terraform/app/**'
-      - 'terraform/github/**'
 
 permissions:
   id-token: write
@@ -32,7 +29,7 @@ jobs:
   plan-app:
     name: plan-app
     needs: detect-changes
-    if: needs.detect-changes.outputs.app == 'true'
+    if: needs.detect-changes.outputs.app == 'true' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -88,7 +85,7 @@ jobs:
   plan-github:
     name: plan-github
     needs: detect-changes
-    if: needs.detect-changes.outputs.github == 'true'
+    if: needs.detect-changes.outputs.github == 'true' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
