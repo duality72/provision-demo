@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make a committed SOPS file the single source of truth for the three root secrets, so that Terraform state contains no secret material and every currently-exposed value is rotated dead.
+**Goal:** Make a committed SOPS file the single source of truth for the three root secrets, so that Terraform state contains no secret material and the historical plaintext is purged.
 
-**Architecture:** The SOPS KMS key moves to `terraform/bootstrap`, where its lifecycle is independent of the app stack. `terraform/app` keeps the Secrets Manager *containers* but no longer manages their values; a CI step decrypts `terraform/app/secrets.enc.json` after apply and pushes values to Secrets Manager and to the platform repo's Actions secret. All three secrets are rotated first, making the plaintext in state history worthless.
+**Architecture:** The SOPS KMS key moves to `terraform/bootstrap`, where its lifecycle is independent of the app stack. `terraform/app` keeps the Secrets Manager *containers* but no longer manages their values; a CI step decrypts `terraform/app/secrets.enc.json` after apply and pushes values to Secrets Manager and to the platform repo's Actions secret. The age keypair is rotated (the only one automatable); the historical plaintext for the other two is purged from S3 rather than rotated dead.
 
 **Tech Stack:** Terraform 1.5+, AWS (KMS, Secrets Manager, SSM, Lambda, Cognito), SOPS 3.8.1, age, GitHub Actions with OIDC.
 
@@ -25,72 +25,56 @@
 
 ---
 
-### Task 1: Rotate all three secrets — OPERATOR ONLY
+### Task 1: Rotate the age keypair and assemble the secret values
 
-This task cannot be delegated to an agent. It requires browser sessions with
-GitHub and Anthropic. Every later task depends on its outputs.
+Only the age keypair can be rotated without a vendor console. GitHub exposes no
+API for minting App private keys, and Anthropic's Admin API can list and disable
+keys but not create them. The existing GitHub App and Anthropic keys are
+therefore carried forward unchanged — both were verified live — and their
+historical exposure is remediated by the state-version purge in Task 10 instead.
 
-**Files:** none — outputs are held locally and consumed by Task 4.
+**Files:** none — outputs are consumed by Task 5.
 
 **Interfaces:**
-- Produces: three plaintext values used verbatim in Task 4 —
-  `NEW_APP_KEY_B64` (base64 of the new GitHub App PEM),
-  `NEW_ANTHROPIC_KEY` (string beginning `sk-ant-`),
-  `NEW_AGE_SECRET` (string beginning `AGE-SECRET-KEY-1`) and its derived
-  `NEW_AGE_PUBLIC` (string beginning `age1`).
+- Produces: `NEW_AGE_PUBLIC` (begins `age1`) for `terraform/app/ci.tfvars`, and a
+  plaintext secret bundle piped directly into `sops` in Task 5 with keys
+  `github_app_private_key_base64`, `anthropic_api_key`, `age_secret_key`.
 
-- [ ] **Step 1: Generate a new GitHub App private key**
-
-Go to https://github.com/settings/apps/provision-demo → *Private keys* →
-**Generate a private key**. A `.pem` downloads.
-
-Do **not** revoke the old key yet — Task 9 does that, after the new one is
-proven working.
-
-- [ ] **Step 2: Base64-encode it**
+- [ ] **Step 1: Generate the new age keypair**
 
 ```bash
-base64 -i ~/Downloads/provision-demo.*.private-key.pem | tr -d '\n' > /tmp/app_key_b64.txt
-wc -c /tmp/app_key_b64.txt
+age-keygen -o /tmp/age-new.txt 2>/dev/null
+chmod 600 /tmp/age-new.txt
+grep -o 'age1[a-z0-9]*' /tmp/age-new.txt
 ```
 
-Expected: roughly 2200–2400 bytes, matching the 2240 of the current key.
+Record the printed `age1...` value — it is `NEW_AGE_PUBLIC`, needed in Task 6.
 
-- [ ] **Step 3: Generate a new Anthropic API key**
-
-Go to https://console.anthropic.com/settings/keys → **Create Key**. Copy the
-value; it is shown once. Keep the old key active for now.
-
-- [ ] **Step 4: Generate a new age keypair**
+- [ ] **Step 2: Verify the keypair is internally consistent**
 
 ```bash
-age-keygen -o /tmp/age-new.txt
-grep -o 'age1[a-z0-9]*' /tmp/age-new.txt        # the new PUBLIC key
-grep -o 'AGE-SECRET-KEY-1[A-Z0-9]*' /tmp/age-new.txt   # the new SECRET key
+age-keygen -y /tmp/age-new.txt
 ```
 
-- [ ] **Step 5: Verify the new App key authenticates before going further**
+Expected: the same `age1...` value as Step 1. If they differ, regenerate.
+
+- [ ] **Step 3: Confirm the carried-forward secrets are still live**
+
+The GitHub App and Anthropic keys come from the last pre-teardown state version.
+Confirm that version is still retrievable before depending on it:
 
 ```bash
-python3 - <<'PY'
-import base64, time, json, urllib.request, jwt
-pem = base64.b64decode(open('/tmp/app_key_b64.txt').read()).decode()
-now = int(time.time())
-tok = jwt.encode({"iat": now-60, "exp": now+300, "iss": "3196055"}, pem, algorithm="RS256")
-req = urllib.request.Request("https://api.github.com/app", headers={
-    "Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json",
-    "User-Agent": "rotate-check"})
-print(json.load(urllib.request.urlopen(req, timeout=20))["slug"])
-PY
+aws s3api list-object-versions --bucket provision-demo-tfstate \
+  --prefix provision-demo/app/terraform.tfstate \
+  --query 'Versions[?Size>`40000`].VersionId' --output text | head -1
 ```
 
-Expected: `provision-demo`. If this fails, the wrong file was encoded — stop and
-re-check before continuing.
+Expected: a version id. This is the source Task 5 reads.
 
-- [ ] **Step 6: Record the new age public key for Task 5**
+- [ ] **Step 4: No commit**
 
-The new `age1...` public key replaces the old one in
-`terraform/app/ci.tfvars`. Note it now; Task 5 needs it.
+This task produces no repository changes. `/tmp/age-new.txt` is consumed by
+Task 5 and shredded there.
 
 ---
 
@@ -507,7 +491,8 @@ dispatch.py never calls KMS, so the grant was dead."
 - Create: `terraform/app/secrets.enc.json`
 
 **Interfaces:**
-- Consumes: Task 1's `NEW_APP_KEY_B64`, `NEW_ANTHROPIC_KEY`, `NEW_AGE_SECRET`.
+- Consumes: Task 1's `/tmp/age-new.txt`, plus the GitHub App and Anthropic keys
+  read from the last pre-teardown state version.
 - Produces: `terraform/app/secrets.enc.json` with top-level keys
   `github_app_private_key_base64`, `anthropic_api_key`, `age_secret_key` — the
   exact names Task 6's CI step reads with `jq`.
@@ -522,39 +507,73 @@ creation_rules:
     kms: arn:aws:kms:us-east-1:762260382631:key/f18b83eb-42d4-4630-9674-50b3c2ea13a9
 ```
 
-- [ ] **Step 2: Build the plaintext file outside the repo**
+- [ ] **Step 2: Assemble and encrypt in one pipeline**
+
+The GitHub App and Anthropic keys are read from the last pre-teardown state
+version; the age secret key comes from Task 1. Plaintext is never written to
+disk — it goes straight into `sops` on stdin.
 
 ```bash
-python3 - <<'PY'
-import json
-out = {
-  "github_app_private_key_base64": open('/tmp/app_key_b64.txt').read().strip(),
-  "anthropic_api_key": "<NEW_ANTHROPIC_KEY>",
-  "age_secret_key": "<NEW_AGE_SECRET>",
-}
-json.dump(out, open('/tmp/secrets.json','w'), indent=2)
-PY
-chmod 600 /tmp/secrets.json
+VER=$(aws s3api list-object-versions --bucket provision-demo-tfstate \
+  --prefix provision-demo/app/terraform.tfstate \
+  --query 'Versions[?Size>`40000`].VersionId' --output text | head -1)
+
+aws s3api get-object --bucket provision-demo-tfstate \
+  --key provision-demo/app/terraform.tfstate --version-id "$VER" /tmp/st.json >/dev/null
+
+python3 - <<'INNER' | sops --encrypt --input-type json --output-type json /dev/stdin > terraform/app/secrets.enc.json
+import json, re
+state = json.load(open('/tmp/st.json'))
+vals = {}
+for r in state.get('resources', []):
+    if r['type'] == 'aws_secretsmanager_secret_version':
+        vals[r['name']] = r['instances'][0]['attributes']['secret_string']
+age = re.search(r'AGE-SECRET-KEY-1[A-Z0-9]+', open('/tmp/age-new.txt').read()).group(0)
+print(json.dumps({
+    "github_app_private_key_base64": vals['github_app_key'],
+    "anthropic_api_key": vals['anthropic_api_key'],
+    "age_secret_key": age,
+}))
+INNER
+
+shred -u /tmp/st.json /tmp/age-new.txt 2>/dev/null || rm -f /tmp/st.json /tmp/age-new.txt
 ```
 
-Replace both placeholders with the real values from Task 1.
-
-- [ ] **Step 3: Encrypt into the repo**
+- [ ] **Step 3: Verify it round-trips and holds no plaintext**
 
 ```bash
-sops --encrypt /tmp/secrets.json > terraform/app/secrets.enc.json
-shred -u /tmp/secrets.json 2>/dev/null || rm -P /tmp/secrets.json
+sops -d terraform/app/secrets.enc.json \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(sorted(d.keys())); print({k: len(v) for k,v in d.items()})"
 ```
 
-- [ ] **Step 4: Verify it round-trips and contains no plaintext**
+Expected: keys `['age_secret_key', 'anthropic_api_key', 'github_app_private_key_base64']`
+with lengths 74, 108, and 2240.
 
 ```bash
-sops -d terraform/app/secrets.enc.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(sorted(d.keys())); print({k: len(v) for k,v in d.items()})"
-grep -c "AGE-SECRET-KEY-1\|sk-ant-" terraform/app/secrets.enc.json || echo "no plaintext markers: good"
+grep -cE "AGE-SECRET-KEY-1|sk-ant-|BEGIN RSA" terraform/app/secrets.enc.json \
+  && echo "PLAINTEXT LEAK - do not commit" || echo "no plaintext markers: good"
 ```
 
-Expected: keys `['age_secret_key', 'anthropic_api_key', 'github_app_private_key_base64']`,
-and `no plaintext markers: good`.
+Expected: `no plaintext markers: good`.
+
+- [ ] **Step 4: Verify the encrypted App key still authenticates**
+
+Proves the value survived the state round-trip intact:
+
+```bash
+sops -d terraform/app/secrets.enc.json | python3 -c "
+import base64, json, sys, time, urllib.request, jwt
+pem = base64.b64decode(json.load(sys.stdin)['github_app_private_key_base64']).decode()
+now = int(time.time())
+tok = jwt.encode({'iat': now-60, 'exp': now+300, 'iss': '3196055'}, pem, algorithm='RS256')
+req = urllib.request.Request('https://api.github.com/app', headers={
+    'Authorization': f'Bearer {tok}', 'Accept': 'application/vnd.github+json',
+    'User-Agent': 'sops-verify'})
+print(json.load(urllib.request.urlopen(req, timeout=20))['slug'])
+"
+```
+
+Expected: `provision-demo`.
 
 - [ ] **Step 5: Commit**
 
@@ -563,7 +582,8 @@ git add .sops.yaml terraform/app/secrets.enc.json
 git commit -m "Add SOPS-encrypted root secrets
 
 Source of truth for the three root secrets, encrypted against the bootstrap
-KMS key. Values are freshly rotated; the previous ones are revoked separately."
+KMS key. The age key is newly generated; the GitHub App and Anthropic keys are
+carried forward, since neither vendor allows minting a key through an API."
 ```
 
 ---
@@ -641,7 +661,7 @@ secret. Append to `terraform/app/ci.tfvars`:
 age_public_key          = "<NEW_AGE_PUBLIC>"
 ```
 
-Use the value from Task 1 Step 6.
+Use the `NEW_AGE_PUBLIC` value printed by Task 1 Step 1.
 
 - [ ] **Step 5: Verify no secret variables remain**
 
@@ -1015,26 +1035,92 @@ git commit -m "Add acceptance test for secret-free Terraform state"
 
 ---
 
-### Task 10: Revoke the old secrets — OPERATOR ONLY
+### Task 10: Purge historical plaintext and clean up Actions secrets
 
-Only after Task 9 proves the new values work.
+Rotation of the GitHub App and Anthropic keys was scoped out, so the plaintext in
+historical state objects is remediated by deleting those objects instead. Run
+this only after Task 9 proves the new design writes no secrets to state —
+otherwise the purge just makes room for fresh copies.
 
-**Files:** none.
+**Files:**
+- Create: `scripts/purge-state-history.sh`
 
 **Interfaces:**
-- Consumes: a verified-working stack from Task 9.
+- Consumes: a verified-clean current state from Task 9.
 
-- [ ] **Step 1: Revoke the old GitHub App private key**
+- [ ] **Step 1: Confirm current state is clean before purging history**
 
-https://github.com/settings/apps/provision-demo → *Private keys* → delete the
-key generated before Task 1. The new key's fingerprint should be the only one
-left.
+```bash
+./scripts/verify-no-secrets-in-state.sh
+```
 
-- [ ] **Step 2: Revoke the old Anthropic API key**
+Expected: `PASS` for all three state objects. **If any line says FAIL, stop** —
+purging history while the current state still holds secrets accomplishes nothing.
 
-https://console.anthropic.com/settings/keys → delete the previous key.
+- [ ] **Step 2: Write the purge script**
 
-- [ ] **Step 3: Delete the now-unused Actions secrets**
+Create `scripts/purge-state-history.sh`:
+
+```bash
+#!/usr/bin/env bash
+# Deletes noncurrent versions of the Terraform state objects. Those versions
+# hold the pre-redesign plaintext secrets. The current version is never touched.
+set -euo pipefail
+
+BUCKET=provision-demo-tfstate
+DRY_RUN=${DRY_RUN:-1}
+
+for key in provision-demo/app/terraform.tfstate \
+           provision-demo/github/terraform.tfstate; do
+  echo "== $key"
+  aws s3api list-object-versions --bucket "$BUCKET" --prefix "$key" \
+    --query 'Versions[?IsLatest==`false`].[VersionId]' --output text \
+  | while read -r vid; do
+      [ -z "$vid" ] && continue
+      if [ "$DRY_RUN" = "1" ]; then
+        echo "   would delete $vid"
+      else
+        aws s3api delete-object --bucket "$BUCKET" --key "$key" --version-id "$vid" >/dev/null
+        echo "   deleted $vid"
+      fi
+    done
+done
+
+[ "$DRY_RUN" = "1" ] && echo "DRY RUN — re-run with DRY_RUN=0 to delete"
+exit 0
+```
+
+```bash
+chmod +x scripts/purge-state-history.sh
+```
+
+- [ ] **Step 3: Dry-run it**
+
+```bash
+./scripts/purge-state-history.sh
+```
+
+Expected: a list of `would delete <version>` lines, roughly 15 for the app state.
+The latest version of each object must **not** appear.
+
+- [ ] **Step 4: Execute the purge**
+
+```bash
+DRY_RUN=0 ./scripts/purge-state-history.sh
+```
+
+- [ ] **Step 5: Verify the plaintext is gone**
+
+```bash
+aws s3api list-object-versions --bucket provision-demo-tfstate \
+  --prefix provision-demo/app/terraform.tfstate \
+  --query 'length(Versions)'
+./scripts/verify-no-secrets-in-state.sh
+```
+
+Expected: `1` (current version only), and `PASS` on every state object.
+
+- [ ] **Step 6: Delete the now-unused Actions secrets**
 
 ```bash
 gh secret delete APP_PRIVATE_KEY_BASE64 --repo duality72/provision-demo
@@ -1047,23 +1133,27 @@ gh secret delete AGE_PUBLIC_KEY --repo duality72/provision-demo
 `APP_ID`, `APP_INSTALLATION_ID`, `AWS_ROLE_ARN`, `GH_PAT`, `SOPS_KMS_ARN`,
 `PLATFORM_AWS_ROLE_ARN`, and `CLAUDE_CODE_OAUTH_TOKEN` all stay.
 
-- [ ] **Step 4: Confirm the old App key is dead**
+- [ ] **Step 7: Commit**
 
-Re-run Task 1 Step 5's verification script against the *old* base64 key. Expect
-an HTTP 401. If it still returns `provision-demo`, the wrong key was deleted.
+```bash
+git add scripts/purge-state-history.sh
+git commit -m "Add state-history purge script
 
-- [ ] **Step 5: Verify the app still works**
-
-Reload the app and send one chat message. This exercises both rotated secrets:
-the Anthropic key for the chat call and the GitHub App key for the connectors
-list.
+Deletes noncurrent state versions holding pre-redesign plaintext secrets.
+Substitutes for rotating the GitHub App and Anthropic keys, neither of which
+can be minted through an API."
+```
 
 ---
 
 ## Follow-ups (not in scope)
 
-- Add an S3 lifecycle rule expiring noncurrent state versions after 90 days.
-  Rotation has made the historical plaintext worthless, so this is hygiene.
+- **Rotate the GitHub App private key and the Anthropic API key by hand.** Both
+  require a vendor console. Task 10 purges their historical copies, but the keys
+  themselves are unchanged, so anyone who already read that state still holds
+  working credentials. Recommended, not blocking.
+- Add an S3 lifecycle rule expiring noncurrent state versions automatically, so
+  the purge does not have to be repeated.
 - Consider a CI job for bootstrap. Deliberately omitted: a role able to apply
   bootstrap could rewrite its own trust policy, so manual apply is the safer
   default even now that state is shared.
