@@ -47,7 +47,7 @@ Captured 2026-09-04. Account `762260382631`, region `us-east-1`.
 | Cognito hosted UI domain | `provision-demo.auth.us-east-1.amazoncognito.com` | Yes — prefix is reusable |
 | KMS key ID | `f18b83eb-42d4-4630-9674-50b3c2ea13a9` | Yes — retained |
 | KMS alias | `alias/provision-demo-sops` | Yes — retained |
-| age public key | `age1julah9rcl5zdy9xcfuscsgp6vkdngm6nmu3a9a6zcefd9yjftu8s9mmk78` | Yes — from Actions secret |
+| age public key | `age1julah9rcl5zdy9xcfuscsgp6vkdngm6nmu3a9a6zcefd9yjftu8s9mmk78` (captured at teardown; since superseded) | **No** — rotated on this branch; current value lives in `terraform/app/ci.tfvars`, not an Actions secret. Do not carry the value above forward. |
 | GitHub App ID | `3196055` | Yes |
 | GitHub App installation ID | `119274471` | Yes |
 | Platform repo | `duality72/provision-demo-platform` | Yes |
@@ -82,8 +82,10 @@ are gone.
 
 ## Restore
 
-**Apply `terraform/bootstrap` before starting step 1.** The `Populate secrets`
-step in `terraform-apply.yml` runs `sops -d` against the committed
+**Apply `terraform/bootstrap` before starting step 1.** That work is Tasks 2
+and 3 of `docs/superpowers/plans/2026-09-04-secrets-management.md` (migrating
+bootstrap to the S3 backend, then moving the KMS key into it). The `Populate
+secrets` step in `terraform-apply.yml` runs `sops -d` against the committed
 `terraform/app/secrets.enc.json`, which needs `kms:Decrypt` on the SOPS KMS
 key. `provision-demo-ci` only gets that permission once the bootstrap work
 that moves the key into `terraform/bootstrap` has been applied. Skip it and
@@ -96,10 +98,12 @@ and a non-functional Lambda.
 Push any change under `terraform/app/**` to `main`, or re-run the Terraform Apply
 workflow. It rebuilds the Lambda, layer, Function URL, Cognito pool/client/domain,
 the two Secrets Manager secrets, the six SSM parameters, and the IAM role.
-Everything except the Secrets Manager values comes from Actions secrets; those
-two secrets are instead populated by the `Populate secrets` step, which
-decrypts the committed `terraform/app/secrets.enc.json` with `sops` and writes
-the plaintext straight into Secrets Manager.
+Of the non-secret inputs, only `github_app_id` and `github_app_installation_id`
+come from Actions secrets (`APP_ID`, `APP_INSTALLATION_ID`); the rest —
+including `age_public_key` — come from the committed `terraform/app/ci.tfvars`.
+The two Secrets Manager secrets are populated separately, by the `Populate
+secrets` step, which decrypts the committed `terraform/app/secrets.enc.json`
+with `sops` and writes the plaintext straight into Secrets Manager.
 
 ```
 gh run watch <id> --repo duality72/provision-demo
@@ -147,6 +151,19 @@ Connectors, Chat). The Connectors tab should list the six connectors from the
 platform repo's `main`. Onboard one connector end to end to confirm the
 age-encrypt → dispatch → SOPS-encrypt → PR path still works against the retained
 KMS key.
+
+Also confirm the platform repo still has its age secret:
+
+```
+gh secret list --repo duality72/provision-demo-platform
+```
+
+`AGE_SECRET_KEY` should be listed. On the cutover deploy that removed
+Terraform's management of this secret, `apply-app` (which populates it) and
+`apply-github` (which destroyed the old `github_actions_secret.age_secret_key`
+resource) ran as unordered parallel jobs, so a run where `apply-github`
+finished last could leave `AGE_SECRET_KEY` missing despite a fully green run;
+if so, re-running the Terraform Apply workflow restores it.
 
 ## Notes
 

@@ -32,7 +32,8 @@ repo, so it must outlive that stack. The teardown works around this with a
   secrets — reviewable, diffable, with history.
 - Terraform state contains zero secret material.
 - The KMS key's lifecycle is independent of the app stack.
-- Every value currently exposed in plaintext state is rotated and made dead.
+- The age keypair, the one credential that can be rotated without a vendor
+  console, is rotated and the old value made dead.
 
 ## Non-goals
 
@@ -186,31 +187,42 @@ engineered around.
 
 ### 6. Rotation
 
-All three current values are exposed in plaintext state and are rotated. Both
-rotations that involve a vendor require a browser — neither GitHub nor Anthropic
-exposes an API for minting a new key.
+Only the age keypair is rotated as part of this change. The GitHub App private
+key and the Anthropic API key are **not** rotated: neither GitHub nor Anthropic
+exposes an API for minting a new key, so both are console-only, browser-driven
+operations that a human has to perform out of band. That is out of scope for
+this change and is called out as a follow-up below.
 
-| Value | How | Notes |
-|---|---|---|
-| GitHub App private key | App settings → Private keys → Generate | Revoke the old key only after the new one is in the SOPS file and CI has run |
-| Anthropic API key | console.anthropic.com → API keys | Revoke old after cutover |
-| age keypair | `age-keygen` locally | New public key must reach SSM (`age_public_key` var) and the platform repo simultaneously |
+| Value | Rotated in this change? | How (if ever done) | Notes |
+|---|---|---|---|
+| GitHub App private key | No — console-only, no API | App settings → Private keys → Generate | Recommended follow-up; revoke the old key only after the new one is in the SOPS file and CI has run |
+| Anthropic API key | No — console-only, no API | console.anthropic.com → API keys | Recommended follow-up; revoke old after cutover |
+| age keypair | Yes | `age-keygen` locally | New public key must reach SSM (`age_public_key` var) and the platform repo simultaneously |
 
 The age rotation has one ordering constraint: any onboarding payload encrypted
 with the old public key becomes undecryptable once the platform repo has the new
 secret key. With the app stack currently destroyed there are no in-flight
 payloads, so this is a non-issue if done before restore.
 
-Rotation makes the historical state plaintext dead, so purging the noncurrent
-state versions becomes optional hygiene rather than remediation. A lifecycle rule
-expiring noncurrent versions after 90 days is proposed as a follow-up, not part
-of this change.
+Because the GitHub App private key and the Anthropic API key are not rotated,
+the historical state plaintext for those two values is still live and
+sensitive. Purging the noncurrent state versions is therefore the remediation
+for those two secrets, not optional hygiene — the age key's rotation makes its
+own historical plaintext dead, but does nothing for the other two. A lifecycle
+rule expiring noncurrent versions after 90 days is proposed as a follow-up, not
+part of this change.
+
+**Follow-up (recommended, not done here):** manually rotate the GitHub App
+private key and the Anthropic API key through their respective consoles. Both
+credentials are still the same live values that were present in the plaintext
+state history before this change.
 
 ## Migration sequence
 
 Order matters; the app stack is currently destroyed, which makes this safe.
 
-1. Rotate all three values; hold the new plaintext locally.
+1. Rotate the age keypair; hold the new plaintext, plus the current (unrotated)
+   GitHub App private key and Anthropic API key, locally.
 2. Migrate bootstrap to the S3 backend, then move the KMS key into it (import),
    tighten the key policy, and add `kms:Decrypt` to `provision-demo-ci`. Applied
    **locally** by an operator with IAM and KMS permissions — the one step the
@@ -222,9 +234,16 @@ Order matters; the app stack is currently destroyed, which makes this safe.
 5. Simplify `terraform-destroy.yml` (drop `detach-kms`) and update
    `docs/teardown-restore.md`.
 6. Restore the app stack per the runbook. CI populates the secrets.
-7. Revoke the old GitHub App key and Anthropic key.
-8. Delete the now-unused Actions secrets: `APP_PRIVATE_KEY_BASE64`,
+7. Delete the now-unused Actions secrets: `APP_PRIVATE_KEY_BASE64`,
    `ANTHROPIC_API_KEY`, `AGE_SECRET_KEY` on this repo.
+
+Step 7 as originally planned — "revoke the old GitHub App key and Anthropic
+key" — did not happen, because step 1 never rotated those two values (see
+"Rotation" above). The GitHub App private key and Anthropic API key in
+`terraform/app/secrets.enc.json` today are the same values that were live
+before this change. Revoking them without first generating and installing a
+replacement would break the Lambda; that pairing is the recommended follow-up,
+not a step of this migration.
 
 ## Verification
 
