@@ -1157,10 +1157,15 @@ can be minted through an API."
 
 ## Follow-ups (not in scope)
 
-- **Rotate the GitHub App private key and the Anthropic API key by hand.** Both
-  require a vendor console. Task 10 purges their historical copies, but the keys
-  themselves are unchanged, so anyone who already read that state still holds
-  working credentials. Recommended, not blocking.
+- **Rotating the GitHub App private key and the Anthropic API key by hand was
+  considered and deliberately declined.** Both need a vendor console, and the
+  access analysis in the spec shows the purge in Task 10 fully closes the
+  exposure on its own. See "Why the two unrotated keys do not need rotating"
+  in the spec for the evidence.
+- **Task 10's purge must run under an admin identity, not in CI.** Deleting a
+  specific object version needs `s3:DeleteObjectVersion`, which neither CI role
+  has. If the purge is ever automated into a workflow, that permission has to be
+  granted first — and granting it would also widen what CI can reach.
 - Add an S3 lifecycle rule expiring noncurrent state versions automatically, so
   the purge does not have to be repeated.
 - Consider a CI job for bootstrap. Deliberately omitted: a role able to apply

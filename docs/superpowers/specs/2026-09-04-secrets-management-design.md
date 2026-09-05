@@ -190,13 +190,13 @@ engineered around.
 Only the age keypair is rotated as part of this change. The GitHub App private
 key and the Anthropic API key are **not** rotated: neither GitHub nor Anthropic
 exposes an API for minting a new key, so both are console-only, browser-driven
-operations that a human has to perform out of band. That is out of scope for
-this change and is called out as a follow-up below.
+operations that a human has to perform out of band. Rotating them was considered
+and declined on the evidence set out below.
 
 | Value | Rotated in this change? | How (if ever done) | Notes |
 |---|---|---|---|
-| GitHub App private key | No — console-only, no API | App settings → Private keys → Generate | Recommended follow-up; revoke the old key only after the new one is in the SOPS file and CI has run |
-| Anthropic API key | No — console-only, no API | console.anthropic.com → API keys | Recommended follow-up; revoke old after cutover |
+| GitHub App private key | No — console-only, no API | App settings → Private keys → Generate | Not needed; see the access analysis below |
+| Anthropic API key | No — console-only, no API | console.anthropic.com → API keys | Not needed; see the access analysis below |
 | age keypair | Yes | `age-keygen` locally | New public key must reach SSM (`age_public_key` var) and the platform repo simultaneously |
 
 The age rotation has one ordering constraint: any onboarding payload encrypted
@@ -204,18 +204,48 @@ with the old public key becomes undecryptable once the platform repo has the new
 secret key. With the app stack currently destroyed there are no in-flight
 payloads, so this is a non-issue if done before restore.
 
-Because the GitHub App private key and the Anthropic API key are not rotated,
-the historical state plaintext for those two values is still live and
-sensitive. Purging the noncurrent state versions is therefore the remediation
-for those two secrets, not optional hygiene — the age key's rotation makes its
-own historical plaintext dead, but does nothing for the other two. A lifecycle
-rule expiring noncurrent versions after 90 days is proposed as a follow-up, not
-part of this change.
+Purging the noncurrent state versions (see the migration sequence) is therefore
+the remediation for those two secrets rather than optional hygiene: the age
+key's rotation makes its own historical plaintext dead, but does nothing for the
+other two. A lifecycle rule expiring noncurrent versions automatically is
+proposed as a follow-up, so the purge does not have to be repeated.
 
-**Follow-up (recommended, not done here):** manually rotate the GitHub App
-private key and the Anthropic API key through their respective consoles. Both
-credentials are still the same live values that were present in the plaintext
-state history before this change.
+### Why the two unrotated keys do not need rotating
+
+Rotating them by hand was considered and deliberately declined. Purging the
+historical state versions closes the exposure on its own, because the set of
+principals that could ever have read those versions is limited to account
+administrators. Verified against the live account:
+
+- **Neither CI role can read historical object versions.** `provision-demo-ci`
+  and `provision-demo-platform-ci` are granted `s3:GetObject` and
+  `s3:ListBucket` on the state bucket — not `s3:GetObjectVersion`, and not
+  `s3:ListBucketVersions`. Reading a specific version requires the former and
+  enumerating versions the latter, so both roles can reach only the *current*
+  state object, which after this change holds no secret material.
+- **Both repositories have a single collaborator**, `duality72`, with admin
+  rights. There is no second party who could have assumed a role and read the
+  bucket.
+- **The bucket blocks public access on all four settings**
+  (`BlockPublicAcls`, `IgnorePublicAcls`, `BlockPublicPolicy`,
+  `RestrictPublicBuckets`).
+
+Rotation protects against a credential having already been read by someone who
+should not have it. Here there is no such party: the only principals with
+`s3:GetObjectVersion` in the account are its administrators. Deleting the
+versions therefore removes the last copies rather than merely invalidating
+exposed ones.
+
+This reasoning is conditional on those facts. If the account gains
+administrators who should not hold these credentials, if either repository gains
+collaborators, or if a CI role is later granted `s3:GetObjectVersion`, the
+conclusion no longer holds and both keys should be rotated through their
+consoles.
+
+One operational consequence of the same permission gap: the purge itself needs
+`s3:DeleteObjectVersion`, which neither CI role has. It must run under an
+administrator identity and cannot be moved into a workflow without granting that
+permission first.
 
 ## Migration sequence
 
@@ -238,12 +268,12 @@ Order matters; the app stack is currently destroyed, which makes this safe.
    `ANTHROPIC_API_KEY`, `AGE_SECRET_KEY` on this repo.
 
 Step 7 as originally planned — "revoke the old GitHub App key and Anthropic
-key" — did not happen, because step 1 never rotated those two values (see
-"Rotation" above). The GitHub App private key and Anthropic API key in
+key" — is deliberately absent, because step 1 never rotated those two values.
+The GitHub App private key and Anthropic API key in
 `terraform/app/secrets.enc.json` today are the same values that were live
-before this change. Revoking them without first generating and installing a
-replacement would break the Lambda; that pairing is the recommended follow-up,
-not a step of this migration.
+before this change, and they stay in use. Revoking either without first
+generating and installing a replacement would break the Lambda. See "Why the
+two unrotated keys do not need rotating" for why no replacement is required.
 
 ## Verification
 
