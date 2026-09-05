@@ -12,7 +12,7 @@ are left in place — they are what makes the restore a single workflow run.
 | Terraform remote state | `s3://provision-demo-tfstate` (bootstrap) | Restore re-applies into the same state key |
 | CI OIDC role | `provision-demo-ci` (bootstrap) | Restore authenticates with it |
 | `terraform/app/secrets.enc.json` | Committed, SOPS-encrypted, in this repo | Source of the secret values CI populates into Secrets Manager after apply |
-| **SOPS KMS key** | `alias/provision-demo-sops` — managed by `terraform/bootstrap` | Decrypts committed connector secrets (see below) |
+| **SOPS KMS key** | `alias/provision-demo-sops` — belongs in `terraform/bootstrap`, not yet applied there | Decrypts committed connector secrets (see below) |
 | Platform repo connectors | `duality72/provision-demo-platform` `main` | Unaffected; its Terraform makes no AWS resources |
 | Lambda log group | `/aws/lambda/provision-demo` | Not Terraform-managed; Lambda reuses it on restore |
 
@@ -28,8 +28,9 @@ arn:aws:kms:us-east-1:762260382631:key/f18b83eb-42d4-4630-9674-50b3c2ea13a9
 Destroying it schedules deletion with a 14-day window; after that the key
 material is unrecoverable and all five encrypted connector files become
 permanently undecryptable. A restore would create a *new* key with a *new* ARN,
-which cannot decrypt them. The key lives in `terraform/bootstrap` and is not
-part of the app stack at all, so tearing down `terraform/app` cannot reach it.
+which cannot decrypt them. `terraform/app` no longer declares the key at all —
+it belongs in `terraform/bootstrap`, which will manage it once that relocation
+is applied — so tearing down `terraform/app` cannot reach it either way.
 
 Retaining the key costs about $1/month. That is the whole reason the teardown
 saves ~$1.20/month rather than ~$2.20/month.
@@ -81,12 +82,24 @@ are gone.
 
 ## Restore
 
+**Apply `terraform/bootstrap` before starting step 1.** The `Populate secrets`
+step in `terraform-apply.yml` runs `sops -d` against the committed
+`terraform/app/secrets.enc.json`, which needs `kms:Decrypt` on the SOPS KMS
+key. `provision-demo-ci` only gets that permission once the bootstrap work
+that moves the key into `terraform/bootstrap` has been applied. Skip it and
+`terraform apply` still succeeds, but `Populate secrets` then fails with an
+AccessDenied from KMS — leaving the stack up with two empty secret containers
+and a non-functional Lambda.
+
 ### 1. Re-apply the app stack
 
 Push any change under `terraform/app/**` to `main`, or re-run the Terraform Apply
 workflow. It rebuilds the Lambda, layer, Function URL, Cognito pool/client/domain,
-the three Secrets Manager secrets, the six SSM parameters, and the IAM role,
-using the Actions secrets as inputs.
+the two Secrets Manager secrets, the six SSM parameters, and the IAM role.
+Everything except the Secrets Manager values comes from Actions secrets; those
+two secrets are instead populated by the `Populate secrets` step, which
+decrypts the committed `terraform/app/secrets.enc.json` with `sops` and writes
+the plaintext straight into Secrets Manager.
 
 ```
 gh run watch <id> --repo duality72/provision-demo
@@ -139,12 +152,14 @@ KMS key.
 
 - `terraform/github` is untouched by the teardown, so `SOPS_KMS_ARN` on the
   platform repo stays valid — the key ARN does not change.
-- The three Secrets Manager secrets use `recovery_window_in_days = 0`, so they
+- The two Secrets Manager secrets use `recovery_window_in_days = 0`, so they
   are deleted immediately rather than held for 30 days. Without this a restore
   inside the recovery window fails with "a secret with this name is already
-  scheduled for deletion". Their values come back from Actions secrets.
+  scheduled for deletion". Their values are repopulated by CI from
+  `terraform/app/secrets.enc.json`, not from Actions secrets.
 - Nothing in `dispatch.py` calls KMS; the Lambda's `kms:Encrypt` grant is unused.
   SOPS encryption happens in the platform repo's workflow, not in the Lambda.
-- The KMS key and its `prevent_destroy` lifecycle live entirely in
-  `terraform/bootstrap`. Neither app-stack teardown nor restore ever touches
+- The KMS key and its `prevent_destroy` lifecycle belong in
+  `terraform/bootstrap`, once that stack picks up the key (see the Restore
+  prerequisite above). Either way, app-stack teardown and restore never touch
   that resource, so there is no import or state cleanup step here.
