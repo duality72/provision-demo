@@ -70,8 +70,15 @@ jobs:
 
       - name: Install SOPS
         run: |
+          set -euo pipefail
+          # Pinned digest, not just a pinned version: this binary decrypts
+          # production secrets moments later and is installed with sudo, so a
+          # substituted artifact would be a privileged-context compromise.
+          # sha256sum -c fails non-zero on mismatch, aborting under set -e.
           SOPS_VERSION=3.11.0
+          SOPS_SHA256=775f1384d55decfad228e7196a3f683791914f92a473f78fc47700531c29dfef
           curl -sfLO "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
+          echo "${SOPS_SHA256}  sops-v${SOPS_VERSION}.linux.amd64" | sha256sum -c -
           chmod +x "sops-v${SOPS_VERSION}.linux.amd64"
           sudo mv "sops-v${SOPS_VERSION}.linux.amd64" /usr/local/bin/sops
 
