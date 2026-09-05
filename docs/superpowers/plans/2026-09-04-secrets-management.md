@@ -1159,6 +1159,17 @@ can be minted through an API."
 
 ## Follow-ups (not in scope)
 
+- **Repair and re-enable the `terraform/github` stack.** It has been unappliable
+  since March: `GH_PAT`, `SOPS_KMS_ARN` and `PLATFORM_AWS_ROLE_ARN` are all
+  missing from the demo repo, so the GitHub provider cannot authenticate and the
+  two ARN variables resolve to empty strings. `apply-github` is disabled in
+  `terraform-apply.yml` because a plan currently proposes to blank those two
+  secrets on the platform repo and to recreate `github_branch_protection` on
+  both repos, which have since moved to rulesets. Repair means restoring the
+  three secrets and deleting the `github_branch_protection` resources in favour
+  of the rulesets that replaced them. `plan-github` still runs, so the drift
+  stays visible.
+
 - **Rotating the GitHub App private key and the Anthropic API key by hand was
   considered and deliberately declined.** Both need a vendor console, and the
   access analysis in the spec shows the purge in Task 10 fully closes the

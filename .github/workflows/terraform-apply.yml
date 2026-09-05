@@ -119,7 +119,23 @@ jobs:
   apply-github:
     name: apply-github
     needs: detect-changes
-    if: needs.detect-changes.outputs.github == 'true'
+    # DISABLED — the terraform/github stack has drifted and is unsafe to apply.
+    # A plan against it currently proposes to:
+    #   1. Blank SOPS_KMS_ARN and AWS_ROLE_ARN on the platform repo. Those
+    #      secrets no longer exist on this repo, so TF_VAR_sops_kms_arn and
+    #      TF_VAR_aws_role_arn resolve to empty strings. The platform repo uses
+    #      both to assume AWS and SOPS-encrypt connector secrets.
+    #   2. Recreate github_branch_protection on both repos. They have since
+    #      moved to rulesets, so Terraform reads the legacy protection as
+    #      deleted and would layer it back on top of the rulesets.
+    # It also cannot authenticate at all: GH_PAT is absent, which is why this
+    # stack has been unappliable since March.
+    #
+    # Re-enable by restoring the three missing secrets and reconciling
+    # github_branch_protection against the rulesets — most likely by deleting
+    # those resources, since rulesets have replaced them. plan-github is left
+    # running deliberately, so the drift stays visible on every PR.
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
