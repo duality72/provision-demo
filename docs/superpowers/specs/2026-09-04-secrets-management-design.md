@@ -85,7 +85,17 @@ decrypts. Nothing has ever read that secret. It is dropped entirely.
 
 ## Design
 
-### 1. KMS key moves to `terraform/bootstrap`
+### 1. KMS key moves to `terraform/bootstrap`, which moves to the S3 backend
+
+Bootstrap's state is local only because it originally had to create the bucket
+that would hold it. The bucket and lock table exist now, so bootstrap migrates to
+`s3://provision-demo-tfstate/provision-demo/bootstrap/terraform.tfstate` first,
+and the KMS key is imported into shared, versioned, encrypted state rather than
+onto one machine. `prevent_destroy` goes on the bucket and lock table so a
+destroy cannot orphan the state they hold.
+
+Applying bootstrap stays manual. A CI role able to apply it could rewrite its own
+trust policy, so remote state without a CI job is the deliberate split.
 
 The key already exists and is detached from all state, so this is an import, not
 a create.
@@ -201,10 +211,9 @@ of this change.
 Order matters; the app stack is currently destroyed, which makes this safe.
 
 1. Rotate all three values; hold the new plaintext locally.
-2. Move the KMS key to bootstrap (import), tighten the key policy, add
-   `kms:Decrypt` to `provision-demo-ci`. Apply bootstrap **locally** — there is
-   no CI job for bootstrap and its state is local, so this step needs an operator
-   with IAM and KMS permissions in the account. This is the one step the
+2. Migrate bootstrap to the S3 backend, then move the KMS key into it (import),
+   tighten the key policy, and add `kms:Decrypt` to `provision-demo-ci`. Applied
+   **locally** by an operator with IAM and KMS permissions — the one step the
    "deploy via CI, not locally" rule does not cover.
 3. Create `.sops.yaml` and `terraform/app/secrets.enc.json` with the new values.
    Commit the ciphertext.
@@ -232,15 +241,14 @@ Order matters; the app stack is currently destroyed, which makes this safe.
 
 ## Risks
 
-- **Bootstrap uses local state.** Moving the KMS key there means its state lives
-  in `terraform/bootstrap/terraform.tfstate` on one machine. That file currently
-  holds no secrets and still won't, but losing it means re-importing the key.
+- **Bootstrap becomes self-referential.** Its state lives in the bucket it
+  manages. This is accepted practice and only bites at destroy time, which
+  `prevent_destroy` on the bucket and lock table guards against.
 - **CI gains decrypt capability.** `provision-demo-ci` can decrypt anything
   encrypted with this key, including the connector secrets. Acceptable, and
   narrower than the platform CI role's existing `Resource = "*"`.
 - **`sops` becomes a CI dependency.** Pinned by version, as the platform repo
   already does.
-- **Bootstrap has no CI path.** Step 2 is applied by hand. If that machine's
-  local state diverges from reality, the KMS key can end up unmanaged again —
-  the same class of problem this change exists to fix. Committing bootstrap to a
-  remote backend is a sensible follow-up but is out of scope here.
+- **Bootstrap has no CI path.** It is applied by hand, deliberately: a role with
+  permission to apply bootstrap could rewrite its own trust policy. Shared state
+  means a second operator can now take over, which was the real risk.
