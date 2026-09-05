@@ -5,9 +5,8 @@ name: Terraform Destroy (app)
 # stack can be rebuilt by re-running Terraform Apply.
 #
 # Run the modes in order:
-#   1. detach-kms  — drops the SOPS KMS key + alias from state (no AWS change).
-#   2. plan        — shows exactly what a destroy would remove.
-#   3. destroy     — performs the teardown (requires the confirm input).
+#   1. plan        — shows exactly what a destroy would remove.
+#   2. destroy     — performs the teardown (requires the confirm input).
 #
 # See docs/teardown-restore.md for the restore procedure.
 
@@ -20,7 +19,6 @@ on:
         default: plan
         type: choice
         options:
-          - detach-kms
           - plan
           - destroy
       confirm:
@@ -62,11 +60,8 @@ jobs:
           python-version: '3.12'
 
       # The layer zip must exist on disk: aws_lambda_layer_version reads it with
-      # filebase64sha256, which is evaluated even for a destroy plan. Skipped for
-      # detach-kms, which is a state-only operation and must not be able to fail
-      # on an unrelated pip/network error.
+      # filebase64sha256, which is evaluated even for a destroy plan.
       - name: Build Lambda layer
-        if: inputs.mode != 'detach-kms'
         working-directory: terraform/app/lambda
         run: bash build-layer.sh
 
@@ -76,48 +71,18 @@ jobs:
         working-directory: terraform/app
         run: terraform init
 
-      - name: Detach SOPS KMS key from state
-        if: inputs.mode == 'detach-kms'
-        working-directory: terraform/app
-        run: |
-          set -euo pipefail
-          # The key encrypts committed connector secrets in the platform repo and
-          # must outlive this stack. Removing it from state leaves it untouched in
-          # AWS; docs/teardown-restore.md has the matching import commands.
-          #
-          # Read the state once and fail fast: if `terraform state list` errors,
-          # a piped grep would report "absent" and this step would no-op, leaving
-          # the key in state for a later destroy to delete. -F is a literal match
-          # so the dot in the address is not treated as a wildcard.
-          state=$(terraform state list)
-          for addr in aws_kms_alias.sops aws_kms_key.sops; do
-            if printf '%s\n' "$state" | grep -qxF "$addr"; then
-              terraform state rm "$addr"
-            else
-              echo "$addr already absent from state"
-            fi
-          done
-
       - name: Terraform Plan (destroy)
         if: inputs.mode == 'plan'
         working-directory: terraform/app
         run: terraform plan -destroy -var-file=ci.tfvars -no-color
         env:
-          TF_VAR_github_app_private_key_base64: ${{ secrets.APP_PRIVATE_KEY_BASE64 }}
-          TF_VAR_age_public_key: ${{ secrets.AGE_PUBLIC_KEY }}
-          TF_VAR_age_secret_key: ${{ secrets.AGE_SECRET_KEY }}
           TF_VAR_github_app_id: ${{ secrets.APP_ID }}
           TF_VAR_github_app_installation_id: ${{ secrets.APP_INSTALLATION_ID }}
-          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
       - name: Terraform Destroy
         if: inputs.mode == 'destroy'
         working-directory: terraform/app
         run: terraform destroy -var-file=ci.tfvars -auto-approve -no-color
         env:
-          TF_VAR_github_app_private_key_base64: ${{ secrets.APP_PRIVATE_KEY_BASE64 }}
-          TF_VAR_age_public_key: ${{ secrets.AGE_PUBLIC_KEY }}
-          TF_VAR_age_secret_key: ${{ secrets.AGE_SECRET_KEY }}
           TF_VAR_github_app_id: ${{ secrets.APP_ID }}
           TF_VAR_github_app_installation_id: ${{ secrets.APP_INSTALLATION_ID }}
-          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
