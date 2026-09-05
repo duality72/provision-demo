@@ -203,6 +203,15 @@ resource "aws_iam_role_policy" "ci_provision_demo" {
         Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/provision-demo*"
       },
       {
+        Sid    = "KMSDecryptForSOPS"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:DescribeKey"
+        ]
+        Resource = aws_kms_key.sops.arn
+      },
+      {
         Sid    = "KMSManagement"
         Effect = "Allow"
         Action = [
@@ -350,4 +359,68 @@ resource "aws_iam_role_policy" "ci_platform" {
       }
     ]
   })
+}
+
+# ---------------------------------------------------------------------------
+# SOPS KMS key
+#
+# Lives here, not in terraform/app, because it encrypts the committed
+# connectors/*/secrets.enc.json files in the platform repo and must outlive any
+# teardown of the app stack.
+# ---------------------------------------------------------------------------
+
+resource "aws_kms_key" "sops" {
+  description             = "KMS key for SOPS encryption in provision-demo"
+  deletion_window_in_days = 14
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "RootAccess"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action   = "kms:*"
+        Resource = "*"
+      },
+      {
+        Sid    = "CIDecrypt"
+        Effect = "Allow"
+        Principal = {
+          AWS = [
+            aws_iam_role.ci_provision_demo.arn,
+            aws_iam_role.ci_platform.arn
+          ]
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "PlatformEncrypt"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.ci_platform.arn
+        }
+        Action   = "kms:Encrypt"
+        Resource = "*"
+      }
+    ]
+  })
+
+  # Destroying this orphans every committed connectors/*/secrets.enc.json file
+  # in the platform repo once the 14-day window elapses.
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_kms_alias" "sops" {
+  name          = "alias/provision-demo-sops"
+  target_key_id = aws_kms_key.sops.key_id
 }
