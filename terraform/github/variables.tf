@@ -15,12 +15,6 @@ variable "platform_repo_name" {
   default     = "provision-demo-platform"
 }
 
-variable "age_secret_key" {
-  description = "Age secret key for decrypting payloads in GitHub Actions"
-  type        = string
-  sensitive   = true
-}
-
 variable "sops_kms_arn" {
   description = "ARN of the KMS key used for SOPS encryption"
   type        = string

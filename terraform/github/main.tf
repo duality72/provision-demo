@@ -10,12 +10,6 @@ data "github_repository" "demo" {
 # Platform repo: Actions secrets
 # ---------------------------------------------------------------------------
 
-resource "github_actions_secret" "age_secret_key" {
-  repository      = var.platform_repo_name
-  secret_name     = "AGE_SECRET_KEY"
-  plaintext_value = var.age_secret_key
-}
-
 resource "github_actions_secret" "sops_kms_arn" {
   repository      = var.platform_repo_name
   secret_name     = "SOPS_KMS_ARN"

@@ -65,12 +65,40 @@ jobs:
         working-directory: terraform/app
         run: terraform apply -var-file=ci.tfvars -auto-approve -no-color
         env:
-          TF_VAR_github_app_private_key_base64: ${{ secrets.APP_PRIVATE_KEY_BASE64 }}
-          TF_VAR_age_public_key: ${{ secrets.AGE_PUBLIC_KEY }}
-          TF_VAR_age_secret_key: ${{ secrets.AGE_SECRET_KEY }}
           TF_VAR_github_app_id: ${{ secrets.APP_ID }}
           TF_VAR_github_app_installation_id: ${{ secrets.APP_INSTALLATION_ID }}
-          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Install SOPS
+        run: |
+          SOPS_VERSION=3.8.1
+          curl -sLO "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
+          chmod +x "sops-v${SOPS_VERSION}.linux.amd64"
+          sudo mv "sops-v${SOPS_VERSION}.linux.amd64" /usr/local/bin/sops
+
+      - name: Populate secrets
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          set -euo pipefail
+          # Decrypted plaintext stays in this step only; never written to disk
+          # and never echoed. put-secret-value reads from stdin via file://-.
+          plain=$(sops -d terraform/app/secrets.enc.json)
+
+          for pair in \
+            "github_app_private_key_base64:provision-demo/github-app-private-key" \
+            "anthropic_api_key:provision-demo/anthropic-api-key"; do
+            field="${pair%%:*}"; secret_id="${pair#*:}"
+            printf '%s' "$plain" | jq -r ".${field}" \
+              | aws secretsmanager put-secret-value \
+                  --secret-id "$secret_id" \
+                  --secret-string file:///dev/stdin \
+                  --region us-east-1 >/dev/null
+            echo "populated $secret_id"
+          done
+
+          printf '%s' "$plain" | jq -r '.age_secret_key' \
+            | gh secret set AGE_SECRET_KEY --repo duality72/provision-demo-platform
+          echo "set AGE_SECRET_KEY on the platform repo"
 
   apply-github:
     name: apply-github
@@ -99,7 +127,6 @@ jobs:
         run: terraform apply -var-file=ci.tfvars -auto-approve -no-color
         env:
           TF_VAR_github_token: ${{ secrets.GH_PAT }}
-          TF_VAR_age_secret_key: ${{ secrets.AGE_SECRET_KEY }}
           TF_VAR_sops_kms_arn: ${{ secrets.SOPS_KMS_ARN }}
           TF_VAR_aws_role_arn: ${{ secrets.PLATFORM_AWS_ROLE_ARN }}
           TF_VAR_demo_ci_aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
