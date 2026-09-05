@@ -112,9 +112,22 @@ jobs:
             echo "populated $secret_id"
           done
 
-          printf '%s' "$plain" | jq -ej '.age_secret_key // error("missing field: age_secret_key")' \
-            | gh secret set AGE_SECRET_KEY --repo duality72/provision-demo-platform
-          echo "set AGE_SECRET_KEY on the platform repo"
+          # The platform repo's AGE_SECRET_KEY only needs updating when the age
+          # keypair is rotated, which is rare. Pushing it needs GH_TOKEN, set
+          # from the GH_PAT secret above, which is absent from this repo — so
+          # skip loudly rather than failing a deploy whose real work (the two
+          # Secrets Manager values above) succeeded.
+          if [ -n "${GH_TOKEN:-}" ]; then
+            printf '%s' "$plain" | jq -ej '.age_secret_key // error("missing field: age_secret_key")' \
+              | gh secret set AGE_SECRET_KEY --repo duality72/provision-demo-platform
+            echo "set AGE_SECRET_KEY on the platform repo"
+          else
+            echo "NOTE: GH_PAT absent, so AGE_SECRET_KEY was not pushed to the platform repo."
+            echo "      That is only a problem if the age keypair was just rotated. If so, run:"
+            echo "      sops -d terraform/app/secrets.enc.json \\"
+            echo "        | jq -ej '.age_secret_key // error(\"missing field: age_secret_key\")' \\"
+            echo "        | gh secret set AGE_SECRET_KEY --repo duality72/provision-demo-platform"
+          fi
 
   apply-github:
     name: apply-github
