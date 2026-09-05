@@ -733,7 +733,7 @@ Append to the `apply-app` job, after `Terraform Apply`:
 ```yaml
       - name: Install SOPS
         run: |
-          SOPS_VERSION=3.8.1
+          SOPS_VERSION=3.11.0
           curl -sLO "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
           chmod +x "sops-v${SOPS_VERSION}.linux.amd64"
           sudo mv "sops-v${SOPS_VERSION}.linux.amd64" /usr/local/bin/sops
