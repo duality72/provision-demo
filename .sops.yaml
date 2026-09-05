@@ -1,0 +1,3 @@
+creation_rules:
+  - path_regex: terraform/app/secrets\.enc\.json$
+    kms: arn:aws:kms:us-east-1:762260382631:key/f18b83eb-42d4-4630-9674-50b3c2ea13a9
