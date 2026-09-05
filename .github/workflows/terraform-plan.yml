@@ -116,7 +116,11 @@ jobs:
         working-directory: terraform/github
         run: |
           set -o pipefail
-          terraform plan -input=false -var-file=ci.tfvars -no-color -out=plan.out 2>&1 | tee plan.txt
+          # -lock=false: this is a read-only plan and apply-github is disabled, so
+          # nothing can be writing this state. Without it, a plan that stalls on
+          # GitHub API rate limits orphans the DynamoDB lock on timeout and the
+          # stack needs a manual force-unlock before anything can run again.
+          terraform plan -input=false -lock=false -var-file=ci.tfvars -no-color -out=plan.out 2>&1 | tee plan.txt
         env:
           TF_VAR_github_token: ${{ secrets.GH_PAT }}
           TF_VAR_sops_kms_arn: ${{ secrets.SOPS_KMS_ARN }}
