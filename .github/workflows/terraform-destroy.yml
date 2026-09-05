@@ -1,0 +1,113 @@
+name: Terraform Destroy (app)
+
+# Manual teardown of the terraform/app stack. Bootstrap (state bucket, lock
+# table, OIDC provider, CI roles) and the GitHub stack are NOT touched, so the
+# stack can be rebuilt by re-running Terraform Apply.
+#
+# Run the modes in order:
+#   1. detach-kms  — drops the SOPS KMS key + alias from state (no AWS change).
+#   2. plan        — shows exactly what a destroy would remove.
+#   3. destroy     — performs the teardown (requires the confirm input).
+#
+# See docs/teardown-restore.md for the restore procedure.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'What to run'
+        required: true
+        default: plan
+        type: choice
+        options:
+          - detach-kms
+          - plan
+          - destroy
+      confirm:
+        description: 'For mode=destroy, type the app name exactly: provision-demo'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  destroy-app:
+    name: destroy-app
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Check confirmation
+        if: inputs.mode == 'destroy'
+        run: |
+          if [ "${{ inputs.confirm }}" != "provision-demo" ]; then
+            echo "::error::mode=destroy requires the confirm input to be exactly 'provision-demo'"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      # The layer zip must exist on disk: aws_lambda_layer_version reads it with
+      # filebase64sha256, which is evaluated even for a destroy plan.
+      - name: Build Lambda layer
+        working-directory: terraform/app/lambda
+        run: bash build-layer.sh
+
+      - uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init
+        working-directory: terraform/app
+        run: terraform init
+
+      - name: Detach SOPS KMS key from state
+        if: inputs.mode == 'detach-kms'
+        working-directory: terraform/app
+        run: |
+          # The key encrypts committed connector secrets in the platform repo and
+          # must outlive this stack. Removing it from state leaves it untouched in
+          # AWS; docs/teardown-restore.md has the matching import commands.
+          for addr in aws_kms_alias.sops aws_kms_key.sops; do
+            if terraform state list | grep -qx "$addr"; then
+              terraform state rm "$addr"
+            else
+              echo "$addr already absent from state"
+            fi
+          done
+
+      - name: Terraform Plan (destroy)
+        if: inputs.mode == 'plan'
+        working-directory: terraform/app
+        run: terraform plan -destroy -var-file=ci.tfvars -no-color
+        env:
+          TF_VAR_github_app_private_key_base64: ${{ secrets.APP_PRIVATE_KEY_BASE64 }}
+          TF_VAR_age_public_key: ${{ secrets.AGE_PUBLIC_KEY }}
+          TF_VAR_age_secret_key: ${{ secrets.AGE_SECRET_KEY }}
+          TF_VAR_github_app_id: ${{ secrets.APP_ID }}
+          TF_VAR_github_app_installation_id: ${{ secrets.APP_INSTALLATION_ID }}
+          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Terraform Destroy
+        if: inputs.mode == 'destroy'
+        working-directory: terraform/app
+        run: terraform destroy -var-file=ci.tfvars -auto-approve -no-color
+        env:
+          TF_VAR_github_app_private_key_base64: ${{ secrets.APP_PRIVATE_KEY_BASE64 }}
+          TF_VAR_age_public_key: ${{ secrets.AGE_PUBLIC_KEY }}
+          TF_VAR_age_secret_key: ${{ secrets.AGE_SECRET_KEY }}
+          TF_VAR_github_app_id: ${{ secrets.APP_ID }}
+          TF_VAR_github_app_installation_id: ${{ secrets.APP_INSTALLATION_ID }}
+          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

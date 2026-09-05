@@ -1,3 +1,12 @@
+# WARNING: this key encrypts the committed connectors/*/secrets.enc.json files in
+# the platform repo. It deliberately survives a teardown of this stack — the
+# destroy workflow removes it from state rather than destroying it, because
+# losing the key material would permanently orphan those files.
+#
+# If the stack has been torn down, IMPORT the key and alias before any apply,
+# or Terraform will mint a duplicate key and fail on the existing alias.
+# See docs/teardown-restore.md.
+
 resource "aws_kms_key" "sops" {
   description             = "KMS key for SOPS encryption in ${var.app_name}"
   deletion_window_in_days = 14
