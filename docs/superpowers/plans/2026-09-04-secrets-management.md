@@ -516,14 +516,23 @@ disk — it goes straight into `sops` on stdin.
 ```bash
 VER=$(aws s3api list-object-versions --bucket provision-demo-tfstate \
   --prefix provision-demo/app/terraform.tfstate \
-  --query 'Versions[?Size>`40000`].VersionId' --output text | head -1)
+  --query 'Versions[?Size>`40000`]|[0].VersionId' --output text)
+export VER
 
-aws s3api get-object --bucket provision-demo-tfstate \
-  --key provision-demo/app/terraform.tfstate --version-id "$VER" /tmp/st.json >/dev/null
-
-python3 - <<'INNER' | sops --encrypt --input-type json --output-type json /dev/stdin > terraform/app/secrets.enc.json
-import json, re
-state = json.load(open('/tmp/st.json'))
+# Streamed to stdout, never written to disk: the state object holds all three
+# secrets in cleartext, so materialising it as a temp file is an avoidable
+# exposure even if the file is shredded afterwards.
+python3 - <<'INNER' | sops --encrypt --input-type json --output-type json \
+      --filename-override terraform/app/secrets.enc.json /dev/stdin \
+      > terraform/app/secrets.enc.json
+import json, re, subprocess, os
+raw = subprocess.run([
+    "aws", "s3api", "get-object",
+    "--bucket", "provision-demo-tfstate",
+    "--key", "provision-demo/app/terraform.tfstate",
+    "--version-id", os.environ["VER"], "/dev/stdout",
+], capture_output=True, check=True).stdout
+state = json.loads(raw[:raw.rfind(b"}")+1])
 vals = {}
 for r in state.get('resources', []):
     if r['type'] == 'aws_secretsmanager_secret_version':
@@ -536,7 +545,7 @@ print(json.dumps({
 }))
 INNER
 
-shred -u /tmp/st.json /tmp/age-new.txt 2>/dev/null || rm -f /tmp/st.json /tmp/age-new.txt
+shred -u /tmp/age-new.txt 2>/dev/null || rm -f /tmp/age-new.txt
 ```
 
 - [ ] **Step 3: Verify it round-trips and holds no plaintext**
