@@ -6,6 +6,10 @@ on:
     paths:
       - 'terraform/app/**'
       - 'terraform/github/**'
+  # Manual trigger, so the app stack can be reinstated after a teardown without
+  # inventing a commit to push. This is the restore path in
+  # docs/teardown-restore.md.
+  workflow_dispatch:
 
 # Serialise runs against the shared Terraform state. Without this, an
 # overlapping or superseded run can be killed mid-plan and orphan its
@@ -20,6 +24,9 @@ permissions:
 
 jobs:
   detect-changes:
+    # Only meaningful for a push: a manual run has no diff to filter on, so
+    # apply-app runs unconditionally in that case (see its `if` below).
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -41,7 +48,9 @@ jobs:
   apply-app:
     name: apply-app
     needs: detect-changes
-    if: needs.detect-changes.outputs.app == 'true'
+    # always() is required because detect-changes is skipped on a manual run,
+    # and a skipped dependency would otherwise skip this job too.
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.app == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

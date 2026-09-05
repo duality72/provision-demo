@@ -95,8 +95,13 @@ and a non-functional Lambda.
 
 ### 1. Re-apply the app stack
 
-Push any change under `terraform/app/**` to `main`, or re-run the Terraform Apply
-workflow. It rebuilds the Lambda, layer, Function URL, Cognito pool/client/domain,
+Trigger the Terraform Apply workflow directly — no commit needed:
+
+```
+gh workflow run terraform-apply.yml --repo duality72/provision-demo --ref main
+```
+
+Pushing any change under `terraform/app/**` to `main` also works. It rebuilds the Lambda, layer, Function URL, Cognito pool/client/domain,
 the two Secrets Manager secrets, the six SSM parameters, and the IAM role.
 Of the non-secret inputs, only `github_app_id` and `github_app_installation_id`
 come from Actions secrets (`APP_ID`, `APP_INSTALLATION_ID`); the rest —
