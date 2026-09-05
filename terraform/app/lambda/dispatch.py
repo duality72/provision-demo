@@ -1067,8 +1067,20 @@ def call_claude_api(messages, form_state=None):
         form_context += "\nUse these values as the current state. If the user changed the connector type or fields on the form, acknowledge the changes and continue from the updated state."
         system = system + form_context
     payload = {
-        "model": "claude-sonnet-4-20250514",
-        "max_tokens": 1024,
+        # claude-sonnet-4-20250514 was retired and now 404s, which broke the
+        # Chat tab entirely. Opus 5 runs adaptive thinking by default; the
+        # tool-use loop below already tolerates that, because it replays
+        # response["content"] verbatim and selects blocks by type rather than
+        # assuming a shape.
+        "model": "claude-opus-5",
+        # Thinking tokens count against max_tokens, so 1024 could be exhausted
+        # before an answer was produced.
+        "max_tokens": 16000,
+        # Low effort is an architectural fit, not a cost saving: this Lambda has
+        # a 60s ceiling and runs up to MAX_TOOL_ROUNDS calls at 25s each, so it
+        # depends on fast turns. Low effort also suits the task — asking for one
+        # connector field at a time — giving terser replies and fewer round trips.
+        "output_config": {"effort": "low"},
         "system": system,
         "tools": CHAT_TOOLS,
         "messages": messages,
