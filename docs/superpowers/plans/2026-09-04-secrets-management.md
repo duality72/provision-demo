@@ -195,8 +195,10 @@ confirm a plan is clean:
 terraform plan -no-color | grep -E "Plan:|No changes"
 ```
 
-Expected: `No changes.` or only the two `prevent_destroy` additions, which are
-state-only and show as no infrastructure change.
+Expected: `No changes.` — `prevent_destroy` is a lifecycle meta-argument and
+never appears in a plan diff, so anything else is real drift worth reading.
+Bootstrap has no committed tfvars by default; `ci.tfvars` supplies
+`github_owner`, the only variable without a default.
 
 - [ ] **Step 7: Remove the stale local state files**
 

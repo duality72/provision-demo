@@ -6,6 +6,12 @@ data "aws_caller_identity" "current" {}
 
 resource "aws_s3_bucket" "state" {
   bucket = var.state_bucket_name
+
+  # This bucket now holds this stack's own state. Destroying it would orphan
+  # the state that describes it.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_s3_bucket_versioning" "state" {
@@ -42,6 +48,10 @@ resource "aws_dynamodb_table" "lock" {
     name = "LockID"
     type = "S"
   }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -52,6 +62,18 @@ resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
+
+  # AWS permits one OIDC provider per URL per account, so this resource is
+  # shared: brightdata-hackathon/terraform/bootstrap declares the identical
+  # provider and its default_tags are what put project/component/managed on it.
+  #
+  # ignore_changes stops the two stacks flapping the tags against each other.
+  # prevent_destroy matters more: destroying this would break GitHub Actions
+  # OIDC for every project in the account, not just this one.
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes  = [tags, tags_all]
+  }
 }
 
 # ---------------------------------------------------------------------------
