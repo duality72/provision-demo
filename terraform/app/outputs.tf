@@ -22,8 +22,3 @@ output "cognito_domain" {
   description = "Cognito hosted UI domain"
   value       = "https://${var.cognito_domain_prefix}.auth.${var.aws_region}.amazoncognito.com"
 }
-
-output "kms_key_arn" {
-  description = "KMS key ARN for SOPS encryption"
-  value       = aws_kms_key.sops.arn
-}

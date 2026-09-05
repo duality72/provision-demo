@@ -46,13 +46,6 @@ resource "aws_iam_role_policy" "lambda_app" {
           aws_secretsmanager_secret.age_secret_key.arn,
           aws_secretsmanager_secret.anthropic_api_key.arn
         ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "kms:Encrypt"
-        ]
-        Resource = aws_kms_key.sops.arn
       }
     ]
   })
