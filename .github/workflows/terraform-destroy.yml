@@ -62,8 +62,11 @@ jobs:
           python-version: '3.12'
 
       # The layer zip must exist on disk: aws_lambda_layer_version reads it with
-      # filebase64sha256, which is evaluated even for a destroy plan.
+      # filebase64sha256, which is evaluated even for a destroy plan. Skipped for
+      # detach-kms, which is a state-only operation and must not be able to fail
+      # on an unrelated pip/network error.
       - name: Build Lambda layer
+        if: inputs.mode != 'detach-kms'
         working-directory: terraform/app/lambda
         run: bash build-layer.sh
 
@@ -77,11 +80,18 @@ jobs:
         if: inputs.mode == 'detach-kms'
         working-directory: terraform/app
         run: |
+          set -euo pipefail
           # The key encrypts committed connector secrets in the platform repo and
           # must outlive this stack. Removing it from state leaves it untouched in
           # AWS; docs/teardown-restore.md has the matching import commands.
+          #
+          # Read the state once and fail fast: if `terraform state list` errors,
+          # a piped grep would report "absent" and this step would no-op, leaving
+          # the key in state for a later destroy to delete. -F is a literal match
+          # so the dot in the address is not treated as a wildcard.
+          state=$(terraform state list)
           for addr in aws_kms_alias.sops aws_kms_key.sops; do
-            if terraform state list | grep -qx "$addr"; then
+            if printf '%s\n' "$state" | grep -qxF "$addr"; then
               terraform state rm "$addr"
             else
               echo "$addr already absent from state"

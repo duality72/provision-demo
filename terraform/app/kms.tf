@@ -38,6 +38,13 @@ resource "aws_kms_key" "sops" {
       }
     ]
   })
+
+  # Backstop for the invariant above: a bare `terraform destroy` that skipped the
+  # detach-kms step fails here instead of scheduling the key for deletion. The
+  # guarded teardown removes this resource from state first, so it is unaffected.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_kms_alias" "sops" {

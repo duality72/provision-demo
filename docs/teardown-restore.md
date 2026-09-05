@@ -73,11 +73,16 @@ gh workflow run terraform-destroy.yml --repo duality72/provision-demo -f mode=de
 ```
 
 1. `detach-kms` drops `aws_kms_key.sops` and `aws_kms_alias.sops` from state.
-   Idempotent; no AWS change.
+   Idempotent; no AWS change. It fails rather than continuing if the state cannot
+   be read, so a failed run never leaves the key exposed to step 3.
 2. `plan` runs `terraform plan -destroy` so the destroy list can be reviewed.
    Read it before step 3.
 3. `destroy` tears the stack down. The `confirm` input must be exactly
    `provision-demo` or the run fails before touching anything.
+
+The order is enforced, not just recommended: `aws_kms_key.sops` carries
+`lifecycle { prevent_destroy = true }`, so running `plan` or `destroy` before
+`detach-kms` fails on that resource instead of scheduling the key for deletion.
 
 After teardown the app URL returns `404`/`403` — the Lambda and its Function URL
 are gone.
@@ -171,3 +176,6 @@ KMS key.
   scheduled for deletion". Their values come back from Actions secrets.
 - Nothing in `dispatch.py` calls KMS; the Lambda's `kms:Encrypt` grant is unused.
   SOPS encryption happens in the platform repo's workflow, not in the Lambda.
+- `prevent_destroy` on the KMS key only blocks destruction while the resource is
+  in state. After the import in restore step 1 it is in force again, so no
+  cleanup is needed.
