@@ -19,6 +19,7 @@ permissions:
 jobs:
   detect-changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       app: ${{ steps.filter.outputs.app }}
       github: ${{ steps.filter.outputs.github }}
@@ -38,6 +39,7 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.app == 'true' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       id-token: write
       contents: read
@@ -90,6 +92,7 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.github == 'true' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       id-token: write
       contents: read
