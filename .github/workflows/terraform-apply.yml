@@ -71,7 +71,7 @@ jobs:
       - name: Install SOPS
         run: |
           SOPS_VERSION=3.8.1
-          curl -sLO "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
+          curl -sfLO "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
           chmod +x "sops-v${SOPS_VERSION}.linux.amd64"
           sudo mv "sops-v${SOPS_VERSION}.linux.amd64" /usr/local/bin/sops
 
@@ -88,7 +88,7 @@ jobs:
             "github_app_private_key_base64:provision-demo/github-app-private-key" \
             "anthropic_api_key:provision-demo/anthropic-api-key"; do
             field="${pair%%:*}"; secret_id="${pair#*:}"
-            printf '%s' "$plain" | jq -r ".${field}" \
+            printf '%s' "$plain" | jq -er ".${field} // error(\"missing field: ${field}\")" \
               | aws secretsmanager put-secret-value \
                   --secret-id "$secret_id" \
                   --secret-string file:///dev/stdin \
@@ -96,7 +96,7 @@ jobs:
             echo "populated $secret_id"
           done
 
-          printf '%s' "$plain" | jq -r '.age_secret_key' \
+          printf '%s' "$plain" | jq -er '.age_secret_key // error("missing field: age_secret_key")' \
             | gh secret set AGE_SECRET_KEY --repo duality72/provision-demo-platform
           echo "set AGE_SECRET_KEY on the platform repo"
 
