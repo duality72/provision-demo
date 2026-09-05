@@ -4,6 +4,13 @@ on:
   pull_request:
     branches: [main]
 
+# Serialise runs against the shared Terraform state. Without this, an
+# overlapping or superseded run can be killed mid-plan and orphan its
+# DynamoDB lock, which blocks the stack until someone force-unlocks it.
+concurrency:
+  group: terraform-${{ github.workflow }}
+  cancel-in-progress: false
+
 permissions:
   id-token: write
   contents: read
@@ -12,6 +19,7 @@ permissions:
 jobs:
   detect-changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       app: ${{ steps.filter.outputs.app }}
       github: ${{ steps.filter.outputs.github }}
@@ -31,6 +39,7 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.app == 'true' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       id-token: write
       contents: read
@@ -56,21 +65,17 @@ jobs:
 
       - name: Terraform Init
         working-directory: terraform/app
-        run: terraform init
+        run: terraform init -input=false
 
       - name: Terraform Plan
         id: plan
         working-directory: terraform/app
         run: |
           set -o pipefail
-          terraform plan -var-file=ci.tfvars -no-color -out=plan.out 2>&1 | tee plan.txt
+          terraform plan -input=false -var-file=ci.tfvars -no-color -out=plan.out 2>&1 | tee plan.txt
         env:
-          TF_VAR_github_app_private_key_base64: ${{ secrets.APP_PRIVATE_KEY_BASE64 }}
-          TF_VAR_age_public_key: ${{ secrets.AGE_PUBLIC_KEY }}
-          TF_VAR_age_secret_key: ${{ secrets.AGE_SECRET_KEY }}
           TF_VAR_github_app_id: ${{ secrets.APP_ID }}
           TF_VAR_github_app_installation_id: ${{ secrets.APP_INSTALLATION_ID }}
-          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
       - name: Comment plan on PR
         uses: marocchino/sticky-pull-request-comment@v3
@@ -87,6 +92,7 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.github == 'true' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       id-token: write
       contents: read
@@ -103,17 +109,20 @@ jobs:
 
       - name: Terraform Init
         working-directory: terraform/github
-        run: terraform init
+        run: terraform init -input=false
 
       - name: Terraform Plan
         id: plan
         working-directory: terraform/github
         run: |
           set -o pipefail
-          terraform plan -var-file=ci.tfvars -no-color -out=plan.out 2>&1 | tee plan.txt
+          # -lock=false: this is a read-only plan and apply-github is disabled, so
+          # nothing can be writing this state. Without it, a plan that stalls on
+          # GitHub API rate limits orphans the DynamoDB lock on timeout and the
+          # stack needs a manual force-unlock before anything can run again.
+          terraform plan -input=false -lock=false -var-file=ci.tfvars -no-color -out=plan.out 2>&1 | tee plan.txt
         env:
           TF_VAR_github_token: ${{ secrets.GH_PAT }}
-          TF_VAR_age_secret_key: ${{ secrets.AGE_SECRET_KEY }}
           TF_VAR_sops_kms_arn: ${{ secrets.SOPS_KMS_ARN }}
           TF_VAR_aws_role_arn: ${{ secrets.PLATFORM_AWS_ROLE_ARN }}
           TF_VAR_demo_ci_aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}

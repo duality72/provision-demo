@@ -11,8 +11,8 @@ are left in place — they are what makes the restore a single workflow run.
 |---|---|---|
 | Terraform remote state | `s3://provision-demo-tfstate` (bootstrap) | Restore re-applies into the same state key |
 | CI OIDC role | `provision-demo-ci` (bootstrap) | Restore authenticates with it |
-| `TF_VAR_*` input values | Actions secrets on `duality72/provision-demo` | Every required variable is re-supplied by CI |
-| **SOPS KMS key** | `alias/provision-demo-sops` — detached from state, left running | Decrypts committed connector secrets (see below) |
+| `terraform/app/secrets.enc.json` | Committed, SOPS-encrypted, in this repo | Source of the secret values CI populates into Secrets Manager after apply |
+| **SOPS KMS key** | `alias/provision-demo-sops` — belongs in `terraform/bootstrap`, not yet applied there | Decrypts committed connector secrets (see below) |
 | Platform repo connectors | `duality72/provision-demo-platform` `main` | Unaffected; its Terraform makes no AWS resources |
 | Lambda log group | `/aws/lambda/provision-demo` | Not Terraform-managed; Lambda reuses it on restore |
 
@@ -28,8 +28,9 @@ arn:aws:kms:us-east-1:762260382631:key/f18b83eb-42d4-4630-9674-50b3c2ea13a9
 Destroying it schedules deletion with a 14-day window; after that the key
 material is unrecoverable and all five encrypted connector files become
 permanently undecryptable. A restore would create a *new* key with a *new* ARN,
-which cannot decrypt them. So the teardown removes the key and its alias from
-Terraform state instead — no AWS change — and the restore imports them back.
+which cannot decrypt them. `terraform/app` no longer declares the key at all —
+it belongs in `terraform/bootstrap`, which will manage it once that relocation
+is applied — so tearing down `terraform/app` cannot reach it either way.
 
 Retaining the key costs about $1/month. That is the whole reason the teardown
 saves ~$1.20/month rather than ~$2.20/month.
@@ -46,7 +47,7 @@ Captured 2026-09-04. Account `762260382631`, region `us-east-1`.
 | Cognito hosted UI domain | `provision-demo.auth.us-east-1.amazoncognito.com` | Yes — prefix is reusable |
 | KMS key ID | `f18b83eb-42d4-4630-9674-50b3c2ea13a9` | Yes — retained |
 | KMS alias | `alias/provision-demo-sops` | Yes — retained |
-| age public key | `age1julah9rcl5zdy9xcfuscsgp6vkdngm6nmu3a9a6zcefd9yjftu8s9mmk78` | Yes — from Actions secret |
+| age public key | `age1julah9rcl5zdy9xcfuscsgp6vkdngm6nmu3a9a6zcefd9yjftu8s9mmk78` (captured at teardown; since superseded) | **No** — rotated on this branch; current value lives in `terraform/app/ci.tfvars`, not an Actions secret. Do not carry the value above forward. |
 | GitHub App ID | `3196055` | Yes |
 | GitHub App installation ID | `119274471` | Yes |
 | Platform repo | `duality72/provision-demo-platform` | Yes |
@@ -64,66 +65,51 @@ Connectors on the platform repo's `main` at teardown: `analytics-warehouse`,
 
 ## Teardown
 
-Run the **Terraform Destroy (app)** workflow three times, in order:
+Run the **Terraform Destroy (app)** workflow twice, in order:
 
 ```
-gh workflow run terraform-destroy.yml --repo duality72/provision-demo -f mode=detach-kms
 gh workflow run terraform-destroy.yml --repo duality72/provision-demo -f mode=plan
 gh workflow run terraform-destroy.yml --repo duality72/provision-demo -f mode=destroy -f confirm=provision-demo
 ```
 
-1. `detach-kms` drops `aws_kms_key.sops` and `aws_kms_alias.sops` from state.
-   Idempotent; no AWS change. It fails rather than continuing if the state cannot
-   be read, so a failed run never leaves the key exposed to step 3.
-2. `plan` runs `terraform plan -destroy` so the destroy list can be reviewed.
-   Read it before step 3.
-3. `destroy` tears the stack down. The `confirm` input must be exactly
+1. `plan` runs `terraform plan -destroy` so the destroy list can be reviewed.
+   Read it before step 2.
+2. `destroy` tears the stack down. The `confirm` input must be exactly
    `provision-demo` or the run fails before touching anything.
-
-The order is enforced, not just recommended: `aws_kms_key.sops` carries
-`lifecycle { prevent_destroy = true }`, so running `plan` or `destroy` before
-`detach-kms` fails on that resource instead of scheduling the key for deletion.
 
 After teardown the app URL returns `404`/`403` — the Lambda and its Function URL
 are gone.
 
 ## Restore
 
-**Do step 1 before any `terraform apply` touches `terraform/app`.** While the KMS
-key is detached, the config still declares it, so an apply would try to create a
-second key and then fail because `alias/provision-demo-sops` already exists.
+**Apply `terraform/bootstrap` before starting step 1.** That work is Tasks 2
+and 3 of `docs/superpowers/plans/2026-09-04-secrets-management.md` (migrating
+bootstrap to the S3 backend, then moving the KMS key into it). The `Populate
+secrets` step in `terraform-apply.yml` runs `sops -d` against the committed
+`terraform/app/secrets.enc.json`, which needs `kms:Decrypt` on the SOPS KMS
+key. `provision-demo-ci` only gets that permission once the bootstrap work
+that moves the key into `terraform/bootstrap` has been applied. Skip it and
+`terraform apply` still succeeds, but `Populate secrets` then fails with an
+AccessDenied from KMS — leaving the stack up with two empty secret containers
+and a non-functional Lambda.
 
-### 1. Import the retained KMS key and alias
-
-Run from `terraform/app`, with credentials that can write the remote state:
-
-```
-terraform init
-terraform import \
-  -var-file=ci.tfvars \
-  aws_kms_key.sops f18b83eb-42d4-4630-9674-50b3c2ea13a9
-terraform import \
-  -var-file=ci.tfvars \
-  aws_kms_alias.sops alias/provision-demo-sops
-```
-
-Both imports need the six `TF_VAR_*` values set, same as any other Terraform run
-here. Easiest path is a temporary `workflow_dispatch` job that reuses the block
-from `terraform-apply.yml`, so the values come from Actions secrets rather than
-a local file.
-
-### 2. Re-apply the app stack
+### 1. Re-apply the app stack
 
 Push any change under `terraform/app/**` to `main`, or re-run the Terraform Apply
 workflow. It rebuilds the Lambda, layer, Function URL, Cognito pool/client/domain,
-the three Secrets Manager secrets, the six SSM parameters, and the IAM role,
-using the Actions secrets as inputs.
+the two Secrets Manager secrets, the six SSM parameters, and the IAM role.
+Of the non-secret inputs, only `github_app_id` and `github_app_installation_id`
+come from Actions secrets (`APP_ID`, `APP_INSTALLATION_ID`); the rest —
+including `age_public_key` — come from the committed `terraform/app/ci.tfvars`.
+The two Secrets Manager secrets are populated separately, by the `Populate
+secrets` step, which decrypts the committed `terraform/app/secrets.enc.json`
+with `sops` and writes the plaintext straight into Secrets Manager.
 
 ```
 gh run watch <id> --repo duality72/provision-demo
 ```
 
-### 3. Recreate the demo user
+### 2. Recreate the demo user
 
 The Cognito pool is new, so it has no users. Using the new pool ID from
 `terraform output cognito_user_pool_id`:
@@ -147,7 +133,7 @@ aws cognito-idp admin-set-user-password \
 The pool requires at least 8 characters with an uppercase, a lowercase, and a
 digit.
 
-### 4. Pick up the new app URL
+### 3. Pick up the new app URL
 
 The Function URL changes. Terraform writes the new one to
 `/provision-demo/app-url` and wires it into the Cognito client's callback and
@@ -158,7 +144,7 @@ aws ssm get-parameter --name /provision-demo/app-url \
   --region us-east-1 --query Parameter.Value --output text
 ```
 
-### 5. Verify
+### 4. Verify
 
 Sign in at the new URL as `demo@dctank.com` and check all three tabs (Onboard,
 Connectors, Chat). The Connectors tab should list the six connectors from the
@@ -166,16 +152,31 @@ platform repo's `main`. Onboard one connector end to end to confirm the
 age-encrypt → dispatch → SOPS-encrypt → PR path still works against the retained
 KMS key.
 
+Also confirm the platform repo still has its age secret:
+
+```
+gh secret list --repo duality72/provision-demo-platform
+```
+
+`AGE_SECRET_KEY` should be listed. On the cutover deploy that removed
+Terraform's management of this secret, `apply-app` (which populates it) and
+`apply-github` (which destroyed the old `github_actions_secret.age_secret_key`
+resource) ran as unordered parallel jobs, so a run where `apply-github`
+finished last could leave `AGE_SECRET_KEY` missing despite a fully green run;
+if so, re-running the Terraform Apply workflow restores it.
+
 ## Notes
 
 - `terraform/github` is untouched by the teardown, so `SOPS_KMS_ARN` on the
   platform repo stays valid — the key ARN does not change.
-- The three Secrets Manager secrets use `recovery_window_in_days = 0`, so they
+- The two Secrets Manager secrets use `recovery_window_in_days = 0`, so they
   are deleted immediately rather than held for 30 days. Without this a restore
   inside the recovery window fails with "a secret with this name is already
-  scheduled for deletion". Their values come back from Actions secrets.
+  scheduled for deletion". Their values are repopulated by CI from
+  `terraform/app/secrets.enc.json`, not from Actions secrets.
 - Nothing in `dispatch.py` calls KMS; the Lambda's `kms:Encrypt` grant is unused.
   SOPS encryption happens in the platform repo's workflow, not in the Lambda.
-- `prevent_destroy` on the KMS key only blocks destruction while the resource is
-  in state. After the import in restore step 1 it is in force again, so no
-  cleanup is needed.
+- The KMS key and its `prevent_destroy` lifecycle belong in
+  `terraform/bootstrap`, once that stack picks up the key (see the Restore
+  prerequisite above). Either way, app-stack teardown and restore never touch
+  that resource, so there is no import or state cleanup step here.

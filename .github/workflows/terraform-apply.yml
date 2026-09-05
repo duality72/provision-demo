@@ -7,6 +7,13 @@ on:
       - 'terraform/app/**'
       - 'terraform/github/**'
 
+# Serialise runs against the shared Terraform state. Without this, an
+# overlapping or superseded run can be killed mid-plan and orphan its
+# DynamoDB lock, which blocks the stack until someone force-unlocks it.
+concurrency:
+  group: terraform-${{ github.workflow }}
+  cancel-in-progress: false
+
 permissions:
   id-token: write
   contents: read
@@ -14,6 +21,7 @@ permissions:
 jobs:
   detect-changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       app: ${{ steps.filter.outputs.app }}
       github: ${{ steps.filter.outputs.github }}
@@ -35,6 +43,7 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.app == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       id-token: write
       contents: read
@@ -59,24 +68,76 @@ jobs:
 
       - name: Terraform Init
         working-directory: terraform/app
-        run: terraform init
+        run: terraform init -input=false
 
       - name: Terraform Apply
         working-directory: terraform/app
-        run: terraform apply -var-file=ci.tfvars -auto-approve -no-color
+        run: terraform apply -input=false -var-file=ci.tfvars -auto-approve -no-color
         env:
-          TF_VAR_github_app_private_key_base64: ${{ secrets.APP_PRIVATE_KEY_BASE64 }}
-          TF_VAR_age_public_key: ${{ secrets.AGE_PUBLIC_KEY }}
-          TF_VAR_age_secret_key: ${{ secrets.AGE_SECRET_KEY }}
           TF_VAR_github_app_id: ${{ secrets.APP_ID }}
           TF_VAR_github_app_installation_id: ${{ secrets.APP_INSTALLATION_ID }}
-          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Install SOPS
+        run: |
+          set -euo pipefail
+          # Pinned digest, not just a pinned version: this binary decrypts
+          # production secrets moments later and is installed with sudo, so a
+          # substituted artifact would be a privileged-context compromise.
+          # sha256sum -c fails non-zero on mismatch, aborting under set -e.
+          SOPS_VERSION=3.11.0
+          SOPS_SHA256=775f1384d55decfad228e7196a3f683791914f92a473f78fc47700531c29dfef
+          curl -sfLO "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
+          echo "${SOPS_SHA256}  sops-v${SOPS_VERSION}.linux.amd64" | sha256sum -c -
+          chmod +x "sops-v${SOPS_VERSION}.linux.amd64"
+          sudo mv "sops-v${SOPS_VERSION}.linux.amd64" /usr/local/bin/sops
+
+      - name: Populate secrets
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          set -euo pipefail
+          # Decrypted plaintext stays in this step only; never written to disk
+          # and never echoed. put-secret-value reads from stdin via file:///dev/stdin.
+          plain=$(sops -d terraform/app/secrets.enc.json)
+
+          for pair in \
+            "github_app_private_key_base64:provision-demo/github-app-private-key" \
+            "anthropic_api_key:provision-demo/anthropic-api-key"; do
+            field="${pair%%:*}"; secret_id="${pair#*:}"
+            printf '%s' "$plain" | jq -ej ".${field} // error(\"missing field: ${field}\")" \
+              | aws secretsmanager put-secret-value \
+                  --secret-id "$secret_id" \
+                  --secret-string file:///dev/stdin \
+                  --region us-east-1 >/dev/null
+            echo "populated $secret_id"
+          done
+
+          printf '%s' "$plain" | jq -ej '.age_secret_key // error("missing field: age_secret_key")' \
+            | gh secret set AGE_SECRET_KEY --repo duality72/provision-demo-platform
+          echo "set AGE_SECRET_KEY on the platform repo"
 
   apply-github:
     name: apply-github
     needs: detect-changes
-    if: needs.detect-changes.outputs.github == 'true'
+    # DISABLED — the terraform/github stack has drifted and is unsafe to apply.
+    # A plan against it currently proposes to:
+    #   1. Blank SOPS_KMS_ARN and AWS_ROLE_ARN on the platform repo. Those
+    #      secrets no longer exist on this repo, so TF_VAR_sops_kms_arn and
+    #      TF_VAR_aws_role_arn resolve to empty strings. The platform repo uses
+    #      both to assume AWS and SOPS-encrypt connector secrets.
+    #   2. Recreate github_branch_protection on both repos. They have since
+    #      moved to rulesets, so Terraform reads the legacy protection as
+    #      deleted and would layer it back on top of the rulesets.
+    # It also cannot authenticate at all: GH_PAT is absent, which is why this
+    # stack has been unappliable since March.
+    #
+    # Re-enable by restoring the three missing secrets and reconciling
+    # github_branch_protection against the rulesets — most likely by deleting
+    # those resources, since rulesets have replaced them. plan-github is left
+    # running deliberately, so the drift stays visible on every PR.
+    if: false
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       id-token: write
       contents: read
@@ -92,14 +153,13 @@ jobs:
 
       - name: Terraform Init
         working-directory: terraform/github
-        run: terraform init
+        run: terraform init -input=false
 
       - name: Terraform Apply
         working-directory: terraform/github
-        run: terraform apply -var-file=ci.tfvars -auto-approve -no-color
+        run: terraform apply -input=false -var-file=ci.tfvars -auto-approve -no-color
         env:
           TF_VAR_github_token: ${{ secrets.GH_PAT }}
-          TF_VAR_age_secret_key: ${{ secrets.AGE_SECRET_KEY }}
           TF_VAR_sops_kms_arn: ${{ secrets.SOPS_KMS_ARN }}
           TF_VAR_aws_role_arn: ${{ secrets.PLATFORM_AWS_ROLE_ARN }}
           TF_VAR_demo_ci_aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}

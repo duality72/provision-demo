@@ -22,3 +22,8 @@ output "ci_role_arn_platform" {
   description = "IAM role ARN for provision-demo-platform CI"
   value       = aws_iam_role.ci_platform.arn
 }
+
+output "sops_kms_key_arn" {
+  description = "ARN of the SOPS KMS key"
+  value       = aws_kms_key.sops.arn
+}

@@ -21,21 +21,9 @@ variable "github_app_id" {
   type        = string
 }
 
-variable "github_app_private_key_base64" {
-  description = "Base64-encoded GitHub App private key (PEM)"
-  type        = string
-  sensitive   = true
-}
-
 variable "age_public_key" {
   description = "Age public key for encrypting payloads"
   type        = string
-}
-
-variable "age_secret_key" {
-  description = "Age secret key for decrypting payloads"
-  type        = string
-  sensitive   = true
 }
 
 variable "platform_repo_full_name" {
@@ -55,8 +43,3 @@ variable "github_app_installation_id" {
   type        = string
 }
 
-variable "anthropic_api_key" {
-  description = "Anthropic API key for Claude chat feature"
-  type        = string
-  sensitive   = true
-}
