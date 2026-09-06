@@ -48,9 +48,24 @@ jobs:
   apply-app:
     name: apply-app
     needs: detect-changes
+    # DISABLED — the app stack is intentionally torn down and is staying down.
+    # `terraform/app` state holds 0 resources, so an apply here would not update
+    # a running stack, it would rebuild it from scratch: new Function URL, new
+    # Cognito pool, no users. See docs/teardown-restore.md.
+    #
+    # This is belt and braces. The whole workflow is *also* disabled at the
+    # GitHub level (`disabled_manually`). Either guard alone would stop an
+    # apply; the workflow-level disable additionally covers `workflow_dispatch`
+    # and any job added here later, while this `if` keeps the standdown visible
+    # in the tree rather than only in the Actions UI. Reinstating needs both:
+    #
+    #   gh workflow enable 251994440 --repo duality72/provision-demo
+    #   # ...then restore the commented-out condition below.
+    #
     # always() is required because detect-changes is skipped on a manual run,
     # and a skipped dependency would otherwise skip this job too.
-    if: always() && (github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.app == 'true')
+    # if: always() && (github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.app == 'true')
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

@@ -5,6 +5,28 @@ stack is torn down. Bootstrap (state bucket, lock table, OIDC provider, CI IAM
 roles), the `terraform/github` stack, both repos, and all GitHub Actions secrets
 are left in place — they are what makes the restore a single workflow run.
 
+## Current status
+
+As of 2026-09-06 the app stack is **torn down and staying down**. The
+`terraform/app` state key is at serial 66 with 0 resources; the Lambda, Function
+URL, and Cognito pool no longer exist.
+
+Terraform Apply is switched off at two independent levels, so neither a push to
+`main` under `terraform/app/**` nor a manual dispatch can rebuild the stack:
+
+| Level | State | Reinstate with |
+|---|---|---|
+| GitHub workflow | `disabled_manually` (id `251994440`) | `gh workflow enable 251994440 --repo duality72/provision-demo` |
+| `apply-app` job | `if: false` in `.github/workflows/terraform-apply.yml` | Restore the commented-out condition above it |
+
+Either guard alone would stop an apply. The workflow-level disable additionally
+switches off `workflow_dispatch` — otherwise the restore path in §1 below — and
+covers any job added to this workflow later; the `if: false` keeps the standdown
+visible in the tree rather than only in the Actions UI.
+
+Terraform Plan is deliberately left running: it is read-only, and `plan-github`
+keeps the `terraform/github` drift visible on every PR.
+
 ## What survives a teardown
 
 | Thing | Where it lives | Why it matters |
@@ -95,7 +117,17 @@ and a non-functional Lambda.
 
 ### 1. Re-apply the app stack
 
-Trigger the Terraform Apply workflow directly — no commit needed:
+First undo both levels of the standdown described under **Current status**.
+Re-enable the workflow, then land a commit restoring the `apply-app` condition
+in place of `if: false` — the job is gated off in the workflow file, so a
+dispatch against a `main` that still carries `if: false` reports success while
+applying nothing:
+
+```
+gh workflow enable 251994440 --repo duality72/provision-demo
+```
+
+Then trigger the Terraform Apply workflow directly — no further commit needed:
 
 ```
 gh workflow run terraform-apply.yml --repo duality72/provision-demo --ref main
