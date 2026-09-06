@@ -19,10 +19,11 @@ Terraform Apply is switched off at two independent levels, so neither a push to
 | GitHub workflow | `disabled_manually` (id `251994440`) | `gh workflow enable 251994440 --repo duality72/provision-demo` |
 | `apply-app` job | `if: false` in `.github/workflows/terraform-apply.yml` | Restore the commented-out condition above it |
 
-Either guard alone would stop an apply. The workflow-level disable additionally
-switches off `workflow_dispatch` — otherwise the restore path in §1 below — and
-covers any job added to this workflow later; the `if: false` keeps the standdown
-visible in the tree rather than only in the Actions UI.
+Either guard alone would stop an apply. The workflow-level disable is the
+broader of the two: it also switches off `workflow_dispatch`, which is the
+restore path in §1 below, and it covers any job added to this workflow later.
+The `if: false` keeps the standdown visible in the tree rather than only in the
+Actions UI.
 
 Terraform Plan is deliberately left running: it is read-only, and `plan-github`
 keeps the `terraform/github` drift visible on every PR.
