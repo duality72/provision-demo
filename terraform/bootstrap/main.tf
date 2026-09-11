@@ -58,22 +58,19 @@ resource "aws_dynamodb_table" "lock" {
 # GitHub Actions OIDC provider
 # ---------------------------------------------------------------------------
 
-resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
-
-  # AWS permits one OIDC provider per URL per account, so this resource is
-  # shared: brightdata-hackathon/terraform/bootstrap declares the identical
-  # provider and its default_tags are what put project/component/managed on it.
-  #
-  # ignore_changes stops the two stacks flapping the tags against each other.
-  # prevent_destroy matters more: destroying this would break GitHub Actions
-  # OIDC for every project in the account, not just this one.
-  lifecycle {
-    prevent_destroy = true
-    ignore_changes  = [tags, tags_all]
-  }
+# The GitHub OIDC provider is an account-wide singleton: AWS permits exactly
+# one per URL, so it cannot be namespaced or duplicated per project. It is
+# owned by dctank-infra's account-level root module and only read here.
+#
+# It used to be declared as a `resource` in three stacks at once (this one,
+# talentcompass, and plenix-infra). Whichever applied last owned its tags and
+# left a permanent diff for the others; two of the three independently grew
+# the same `ignore_changes = [tags, tags_all]` workaround to stop the flapping.
+# Reading it removes the conflict rather than suppressing its symptom, and the
+# prevent_destroy that used to guard this block is unnecessary for a data
+# source -- nothing here can destroy it.
+data "aws_iam_openid_connect_provider" "github" {
+  url = "https://token.actions.githubusercontent.com"
 }
 
 # ---------------------------------------------------------------------------
@@ -89,7 +86,7 @@ resource "aws_iam_role" "ci_provision_demo" {
       {
         Effect = "Allow"
         Principal = {
-          Federated = aws_iam_openid_connect_provider.github.arn
+          Federated = data.aws_iam_openid_connect_provider.github.arn
         }
         Action = "sts:AssumeRoleWithWebIdentity"
         Condition = {
@@ -300,7 +297,7 @@ resource "aws_iam_role" "ci_platform" {
       {
         Effect = "Allow"
         Principal = {
-          Federated = aws_iam_openid_connect_provider.github.arn
+          Federated = data.aws_iam_openid_connect_provider.github.arn
         }
         Action = "sts:AssumeRoleWithWebIdentity"
         Condition = {

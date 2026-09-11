@@ -10,7 +10,7 @@ output "state_lock_table_name" {
 
 output "oidc_provider_arn" {
   description = "ARN of the GitHub Actions OIDC provider"
-  value       = aws_iam_openid_connect_provider.github.arn
+  value       = data.aws_iam_openid_connect_provider.github.arn
 }
 
 output "ci_role_arn_provision_demo" {
