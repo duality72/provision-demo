@@ -9,3 +9,6 @@ __pycache__/
 .env
 lambda-layer/
 age-key.txt
+
+# Claude Code per-user permissions; can hold typed tokens
+.claude/settings.local.json
